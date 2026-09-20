@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "36729513984",
+    "project_id": "enigma-mentality",
+    "storage_bucket": "enigma-mentality.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:36729513984:android:6cb8056efebf76b9b8d0e5",
+        "android_client_info": {
+          "package_name": "com.enigmadevteam.enigma"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSBj4Xqz5YnvWxAqXVmVLqZAdnVCeVqgI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

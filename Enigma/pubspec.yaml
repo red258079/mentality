@@ -1,0 +1,50 @@
+name: enigma
+description: "Ứng dụng hỗ trợ tâm lý sinh viên thực tập — AI-powered wellness companion"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # ── UI & Typography ──────────────────────────────────────
+  google_fonts: ^6.2.1           # Inter font family
+  flutter_animate: ^4.5.0        # Micro-animations
+  lottie: ^3.1.0                 # Lottie JSON animations
+  shimmer: ^3.0.0                # Loading skeleton effect
+
+  # ── Charts ───────────────────────────────────────────────
+  fl_chart: ^0.69.0              # Line chart (mood trend)
+
+  # ── State & Navigation ───────────────────────────────────
+  provider: ^6.1.2               # State management
+
+  # ── Network ──────────────────────────────────────────────
+  dio: ^5.7.0                    # HTTP client with interceptors
+
+  # ── Storage ──────────────────────────────────────────────
+  shared_preferences: ^2.3.4     # Light local key-value storage
+  flutter_secure_storage: ^9.2.2 # Secure JWT token storage
+
+  # ── Utilities ────────────────────────────────────────────
+  intl: ^0.19.0                  # Date/time formatting
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/animations/
+    - assets/images/
