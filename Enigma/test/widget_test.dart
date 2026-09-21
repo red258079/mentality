@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:enigma/main.dart';
+import 'package:enigma/app.dart';
 
 void main() {
   testWidgets('Enigma App smoke test and UI verification', (WidgetTester tester) async {

@@ -127,7 +127,9 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
+# Sensitive Security Keys & Environment
+firebase_credentials.json
+**/firebase_credentials.json
 .env
 .venv
 env/
