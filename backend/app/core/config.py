@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:admin1234@localhost:5432/enigma_db"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:258079@localhost:5432/enigma_db"
 
     # JWT
     SECRET_KEY: str = "CHANGE_THIS_TO_A_RANDOM_SECRET_KEY_IN_PRODUCTION"
