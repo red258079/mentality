@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, users, checkins, journals, tasks, chat, handbook, admin
+from app.api.routes import auth, users, checkins, journals, tasks, chat, handbook, admin, life_logs
 from app.db.database import create_tables
 from app.core.config import settings
 
@@ -10,6 +10,8 @@ from app.core.config import settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_tables()
+    from app.services.vector_store_service import VectorStoreService
+    VectorStoreService.seed_initial_handbook_data()
     yield
 
 
@@ -28,14 +30,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router,      prefix="/auth",     tags=["Auth"])
-app.include_router(users.router,     prefix="/users",    tags=["Users"])
-app.include_router(checkins.router,  prefix="/checkins", tags=["Check-ins"])
-app.include_router(journals.router,  prefix="/journals", tags=["Journals"])
-app.include_router(tasks.router,     prefix="/tasks",    tags=["Tasks"])
-app.include_router(chat.router,      prefix="/chat",     tags=["AI Chat"])
-app.include_router(handbook.router,  prefix="/handbook", tags=["Handbook"])
-app.include_router(admin.router,     prefix="/admin",    tags=["Admin"])
+app.include_router(auth.router,      prefix="/auth",      tags=["Auth"])
+app.include_router(users.router,     prefix="/users",     tags=["Users"])
+app.include_router(checkins.router,  prefix="/checkins",  tags=["Check-ins"])
+app.include_router(journals.router,  prefix="/journals",  tags=["Journals"])
+app.include_router(life_logs.router, prefix="/life-logs", tags=["Life Logs"])
+app.include_router(tasks.router,     prefix="/tasks",     tags=["Tasks"])
+app.include_router(chat.router,      prefix="/chat",      tags=["AI Chat"])
+app.include_router(handbook.router,  prefix="/handbook",  tags=["Handbook"])
+app.include_router(admin.router,     prefix="/admin",     tags=["Admin"])
 
 
 @app.get("/", tags=["Health"])
