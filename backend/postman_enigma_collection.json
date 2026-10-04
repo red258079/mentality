@@ -1,0 +1,357 @@
+{
+	"info": {
+		"_postman_id": "enigma-mentality-api-suite-2026",
+		"name": "Enigma Mentality & Task Management API Collection",
+		"description": "Bộ sưu tập API kiểm thử độc lập cho Hệ thống Quản lý Nhiệm vụ theo chặng, Cẩm nang kinh nghiệm, AI RAG Chat và Tích lũy tình huống thực tế.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "0. Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/",
+					"host": ["{{base_url}}"],
+					"path": [""]
+				}
+			}
+		},
+		{
+			"name": "1. Auth & User",
+			"item": [
+				{
+					"name": "Register Student",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"full_name\": \"Nguyễn Văn Thực Tập\",\n  \"email\": \"intern_test@enigma.edu.vn\",\n  \"password\": \"Password123@\",\n  \"student_id\": \"SV2026_001\",\n  \"university\": \"Đại học Bách Khoa\",\n  \"major\": \"Kỹ thuật Điện tử\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register"]
+						}
+					}
+				},
+				{
+					"name": "Login & Get Bearer Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.access_token) {",
+									"    pm.environment.set('access_token', jsonData.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"intern_test@enigma.edu.vn\",\n  \"password\": \"Password123@\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "2. Tasks Management (Quản lý Nhiệm vụ theo chặng)",
+			"item": [
+				{
+					"name": "Get All Tasks",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks",
+							"host": ["{{base_url}}"],
+							"path": ["tasks"]
+						}
+					}
+				},
+				{
+					"name": "Get Tasks - Preparation Phase",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks?phase=preparation",
+							"host": ["{{base_url}}"],
+							"path": ["tasks"],
+							"query": [
+								{"key": "phase", "value": "preparation"}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Tasks - Adaptation Phase",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks?phase=adaptation",
+							"host": ["{{base_url}}"],
+							"path": ["tasks"],
+							"query": [
+								{"key": "phase", "value": "adaptation"}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Tasks - Sustain Phase",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks?phase=sustain",
+							"host": ["{{base_url}}"],
+							"path": ["tasks"],
+							"query": [
+								{"key": "phase", "value": "sustain"}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Tasks Progress Summary",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks/summary",
+							"host": ["{{base_url}}"],
+							"path": ["tasks", "summary"]
+						}
+					}
+				},
+				{
+					"name": "Toggle Task Completion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/tasks/{{sample_task_id}}/toggle",
+							"host": ["{{base_url}}"],
+							"path": ["tasks", "{{sample_task_id}}", "toggle"]
+						}
+					}
+				},
+				{
+					"name": "Create New Task",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phase\": \"adaptation\",\n  \"pillar\": \"sleep\",\n  \"title\": \"Uống trà hoa cúc trước khi ngủ 30 phút\",\n  \"description\": \"Giúp thư giãn hệ thần kinh sau ca làm việc đêm mệt mỏi.\",\n  \"duration_minutes\": 10,\n  \"unlock_day\": 3,\n  \"sort_order\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/tasks",
+							"host": ["{{base_url}}"],
+							"path": ["tasks"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "3. Handbook & Knowledge Search (Tra cứu Cẩm nang)",
+			"item": [
+				{
+					"name": "Get Handbook Categories",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/handbook/categories",
+							"host": ["{{base_url}}"],
+							"path": ["handbook", "categories"]
+						}
+					}
+				},
+				{
+					"name": "Get Articles List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/handbook?limit=20",
+							"host": ["{{base_url}}"],
+							"path": ["handbook"],
+							"query": [
+								{"key": "limit", "value": "20"}
+							]
+						}
+					}
+				},
+				{
+					"name": "Semantic Vector Search (ChromaDB)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/handbook/search?q=làm thế nào để ngủ ngon khi làm ca đêm&top_k=3",
+							"host": ["{{base_url}}"],
+							"path": ["handbook", "search"],
+							"query": [
+								{"key": "q", "value": "làm thế nào để ngủ ngon khi làm ca đêm"},
+								{"key": "top_k", "value": "3"}
+							]
+						}
+					}
+				},
+				{
+					"name": "Contribute New Article",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Mẹo đi xe buýt đưa đón công ty đúng giờ\",\n  \"summary\": \"Kinh nghiệm đón tuyến bus đưa đón LG Display từ Hải Phòng.\",\n  \"content\": \"Hãy có mặt tại điểm đón trước 10 phút, chuẩn bị sẵn thẻ thực tập sinh.\",\n  \"category\": \"career\",\n  \"tags\": [\"xe-dua-don\", \"di-lai\", \"lg-display\"]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/handbook",
+							"host": ["{{base_url}}"],
+							"path": ["handbook"]
+						}
+					}
+				},
+				{
+					"name": "Vote Article Helpful",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/handbook/{{sample_article_id}}/helpful",
+							"host": ["{{base_url}}"],
+							"path": ["handbook", "{{sample_article_id}}", "helpful"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "4. AI Chat RAG & Situation Accumulation",
+			"item": [
+				{
+					"name": "Create Chat Session",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Tư vấn áp lực công việc ca đứng\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/chat/sessions",
+							"host": ["{{base_url}}"],
+							"path": ["chat", "sessions"]
+						}
+					}
+				},
+				{
+					"name": "Send Chat Message & Trigger RAG",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Mình bị đau nhức lòng bàn chân khi đứng máy 12 tiếng liên tục và mang giày ESD, có cách nào giảm đau hiệu quả không?\",\n  \"stress_level\": 3,\n  \"sleep_hours\": 6.0,\n  \"recent_symptoms\": [\"đau chân\", \"mỏi cơ\"]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/chat/sessions/{{sample_session_id}}/messages",
+							"host": ["{{base_url}}"],
+							"path": ["chat", "sessions", "{{sample_session_id}}", "messages"]
+						}
+					}
+				},
+				{
+					"name": "Accumulate New Situation (Tích lũy tình huống)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"situation_description\": \"Lần đầu làm quen với hệ thống băng chuyền tự động, sinh viên hay bị cuống khi sản phẩm chạy nhanh và báo lỗi sensor.\",\n  \"recommended_solution\": \"Bình tĩnh bấm nút tạm dừng chuyền (Pause) nếu an toàn, báo ngay cho Mentor hoặc Leader ca trực, không tự ý thò tay vào buồng cảm biến.\",\n  \"category_hint\": \"career\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/handbook/accumulate",
+							"host": ["{{base_url}}"],
+							"path": ["handbook", "accumulate"]
+						}
+					}
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://127.0.0.1:8000"
+		},
+		{
+			"key": "access_token",
+			"value": ""
+		},
+		{
+			"key": "sample_task_id",
+			"value": ""
+		},
+		{
+			"key": "sample_article_id",
+			"value": ""
+		},
+		{
+			"key": "sample_session_id",
+			"value": ""
+		}
+	]
+}

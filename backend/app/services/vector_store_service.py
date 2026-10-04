@@ -9,7 +9,10 @@ CHROMA_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(_
 os.makedirs(CHROMA_DATA_DIR, exist_ok=True)
 
 # Persistent Chroma Client
-_chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_DIR)
+_chroma_client = chromadb.PersistentClient(
+    path=CHROMA_DATA_DIR,
+    settings=ChromaSettings(anonymized_telemetry=False)
+)
 _collection = _chroma_client.get_or_create_collection(
     name="enigma_handbook",
     metadata={"hnsw:space": "cosine"}  # Cosine Similarity Metric

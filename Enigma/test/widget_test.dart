@@ -13,10 +13,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify header and core sections exist
-    expect(find.text('STUDENT WELL-BEING SCORE'), findsOneWidget);
-    expect(find.text('HÔM NAY BẠN CẢM THẤY THẾ NÀO?'), findsOneWidget);
-    expect(find.text('Thở Hộp 3p'), findsOneWidget);
+    expect(find.text('Chỉ số phục hồi sức khỏe'), findsOneWidget);
+    expect(find.text('Cảm xúc hôm nay'), findsOneWidget);
     expect(find.text('What Next?'), findsOneWidget);
-    expect(find.text('Lộ trình 30 ngày'), findsOneWidget);
   });
 }

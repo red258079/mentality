@@ -35,5 +35,5 @@ async def create_tables():
     async with engine.begin() as conn:
         result = await conn.execute(text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'"))
         count = result.scalar()
-        print(f"✅ Kết nối PostgreSQL thành công — {count} bảng đang hoạt động trong enigma_db")
+        print(f"[OK] Ket noi PostgreSQL thanh cong - {count} bang dang hoat dong trong enigma_db")
 

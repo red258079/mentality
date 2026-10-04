@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from sqlalchemy import select
+from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 from uuid import UUID
 
 from app.db.database import get_db
 from app.services.user_service import get_current_user
 from app.services.chat_service import ChatService
+from app.db.models.chat import ChatMessage
 
 router = APIRouter()
 
@@ -16,10 +18,14 @@ class CreateSessionRequest(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
-    content: str
-    stress_level: Optional[int] = 2
-    sleep_hours: Optional[float] = 7.0
-    recent_symptoms: Optional[List[str]] = []
+    content: str = Field(..., min_length=1, description="Nội dung câu hỏi hoặc tâm sự của sinh viên")
+    stress_level: Optional[int] = Field(2, ge=1, le=5, description="Mức độ stress hiện tại (1-5)")
+    sleep_hours: Optional[float] = Field(7.0, ge=0, le=24, description="Số giờ ngủ ca gần nhất")
+    recent_symptoms: Optional[List[str]] = Field(default=[], description="Triệu chứng thể chất mệt mỏi")
+
+
+class MessageFeedbackRequest(BaseModel):
+    feedback: int = Field(..., description="1 cho Hữu ích / Thích, -1 cho Chưa hữu ích")
 
 
 async def get_authed_user(authorization: Optional[str] = Header(None), db: AsyncSession = Depends(get_db)):
@@ -38,7 +44,7 @@ async def create_session(
     user=Depends(get_authed_user),
     db: AsyncSession = Depends(get_db)
 ):
-    session = await ChatService.create_chat_session(db, user.id, payload.title)
+    session = await ChatService.create_chat_session(db, user.id, payload.title or "Tư vấn Enigma AI")
     return {
         "id": str(session.id),
         "title": session.title,
@@ -76,6 +82,7 @@ async def get_messages(
             "is_user": m.is_user,
             "content": m.content,
             "rag_sources": m.rag_sources,
+            "feedback": m.feedback,
             "created_at": m.created_at
         }
         for m in messages
@@ -110,5 +117,23 @@ async def send_message(
             "rag_sources": res["rag_sources"],
             "created_at": ai_msg.created_at
         },
-        "risk_assessment": res["risk_assessment"]
+        "risk_assessment": res["risk_assessment"],
+        "crag_status": res.get("crag_status", "CORRECT")
     }
+
+
+@router.post("/messages/{message_id}/feedback", summary="Gửi đánh giá phản hồi cho câu trả lời của AI")
+async def rate_message_feedback(
+    message_id: UUID,
+    payload: MessageFeedbackRequest,
+    user=Depends(get_authed_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(ChatMessage).where(ChatMessage.id == message_id))
+    msg = result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tin nhắn.")
+    
+    msg.feedback = 1 if payload.feedback > 0 else -1
+    await db.commit()
+    return {"message_id": str(message_id), "feedback": msg.feedback, "status": "recorded"}

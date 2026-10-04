@@ -87,7 +87,7 @@ Nhiệm vụ: Trả lời câu hỏi của sinh viên dựa trên thông tin C�
         ai_reply = ""
         if settings.GEMINI_API_KEY:
             try:
-                model = genai.GenerativeModel("gemini-1.5-flash")
+                model = genai.GenerativeModel("gemini-3.8-flash")
                 chat = model.start_chat()
                 response = chat.send_message(f"{system_prompt}\n\nCÂU HỎI SINH VIÊN: {query}")
                 ai_reply = response.text
