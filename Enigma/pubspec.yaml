@@ -34,8 +34,10 @@ dependencies:
 
   # ── Utilities ────────────────────────────────────────────
   intl: ^0.19.0                  # Date/time formatting
+  local_auth: ^2.3.0             # Biometric authentication (Vân tay / Face ID)
   firebase_core: ^4.15.0
   firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^17.2.3
 
 dev_dependencies:
   flutter_test:

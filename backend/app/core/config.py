@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     # Firebase (path to service account JSON)
     FIREBASE_CREDENTIALS_PATH: str = "firebase_credentials.json"
 
+    # ── SMTP Email (Gmail App Password) ──────────────────────────────────────
+    # Hướng dẫn lấy App Password Gmail:
+    # 1. myaccount.google.com → Bảo mật → Xác minh 2 bước (phải bật)
+    # 2. Bảo mật → App passwords → Tạo mới → Đặt tên "Enigma" → Copy 16 ký tự
+    SMTP_HOST: str     = "smtp.gmail.com"
+    SMTP_PORT: int     = 587
+    SMTP_USER: str     = ""          # Điền Gmail của bạn vào .env: SMTP_USER=abc@gmail.com
+    SMTP_PASSWORD: str = ""          # Điền App Password 16 ký tự: SMTP_PASSWORD=xxxx xxxx xxxx xxxx
+    SMTP_FROM_NAME: str = "Enigma – Hỗ trợ tâm lý"
+
     # CORS - allow Flutter app
     CORS_ORIGINS: List[str] = [
         "http://localhost",
@@ -35,3 +45,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

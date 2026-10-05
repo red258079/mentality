@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -6,6 +6,7 @@ from app.db.database import get_db
 from app.schemas.auth import (
     RegisterRequest, LoginRequest, TokenResponse,
     RefreshRequest, AccessTokenResponse, UserResponse,
+    ForgotPasswordRequest, ResetPasswordRequest,
 )
 from app.services import user_service
 from app.core.security import verify_password
@@ -127,3 +128,44 @@ async def logout(
 ):
     await user_service.revoke_refresh_token(db, payload.refresh_token)
     return None
+
+
+# ── POST /auth/forgot-password ────────────────────────────────────────────────
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_200_OK,
+    summary="Gửi mã OTP quên mật khẩu về email",
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    # Luôn trả 200 dù email có tồn tại hay không (tránh email enumeration)
+    await user_service.generate_otp_for_user(db, payload.email, background_tasks)
+    return {"message": "Nếu email tồn tại, mã xác nhận đã được gửi. Vui lòng kiểm tra hộp thư."}
+
+
+# ── POST /auth/reset-password ─────────────────────────────────────────────────
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Đặt lại mật khẩu bằng mã OTP",
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    success = await user_service.reset_password_with_otp(
+        db,
+        email        = payload.email,
+        otp          = payload.otp,
+        new_password = payload.new_password,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mã xác nhận không đúng hoặc đã hết hạn. Vui lòng thử lại.",
+        )
+    return {"message": "Mật khẩu đã được cập nhật thành công."}
+

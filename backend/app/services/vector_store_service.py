@@ -91,7 +91,13 @@ class VectorStoreService:
 
     @staticmethod
     def seed_initial_handbook_data():
-        """Seed or update initial handbook articles into ChromaDB."""
+        """Seed initial handbook articles into ChromaDB only if empty."""
+        try:
+            if _collection.count() > 0:
+                print(f"[OK] ChromaDB da san sang ({_collection.count()} chunks handbook).")
+                return
+        except Exception as e:
+            print(f"[WARN] Kiem tra ChromaDB: {e}")
 
         seed_articles = [
             {

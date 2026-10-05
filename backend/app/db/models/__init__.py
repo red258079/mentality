@@ -7,6 +7,7 @@ from app.db.models.chat import ChatSession, ChatMessage
 from app.db.models.journal import Journal
 from app.db.models.checkin import DailyCheckin, UserStreak
 from app.db.models.task import Task, UserTaskProgress, PillarType
+from app.db.models.notification_log import NotificationLog, NotificationType
 
 __all__ = [
     "Base",
@@ -25,4 +26,6 @@ __all__ = [
     "Task",
     "UserTaskProgress",
     "PillarType",
+    "NotificationLog",
+    "NotificationType",
 ]

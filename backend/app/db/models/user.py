@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Boolean, Enum, DateTime, Text
+    Column, String, Boolean, Enum, DateTime, Text, Integer
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -37,6 +37,8 @@ class User(Base):
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
+    otp_code      = Column(String(6), nullable=True)           # Mã OTP quên mật khẩu
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)  # Hết hạn sau 5 phút
 
     # Relationships
     intern_profile  = relationship("InternProfile",  back_populates="user", uselist=False, cascade="all, delete-orphan")
