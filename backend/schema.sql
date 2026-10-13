@@ -11,7 +11,9 @@ CREATE TYPE notification_type AS ENUM ('reminder_checkin', 'reminder_journal', '
 CREATE TABLE users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email           VARCHAR(255) UNIQUE NOT NULL,
-    password_hash   TEXT NOT NULL,
+    password_hash   TEXT,
+    auth_provider   VARCHAR(50) DEFAULT 'local',
+    google_id       VARCHAR(255) UNIQUE,
     role            user_role NOT NULL DEFAULT 'student',
     full_name       VARCHAR(255) NOT NULL,
     student_id      VARCHAR(20) UNIQUE,
@@ -22,7 +24,9 @@ CREATE TABLE users (
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_login_at   TIMESTAMPTZ
+    last_login_at   TIMESTAMPTZ,
+    otp_code        VARCHAR(6),
+    otp_expires_at  TIMESTAMPTZ
 );
 CREATE INDEX idx_users_email      ON users (email);
 CREATE INDEX idx_users_role       ON users (role);
@@ -224,6 +228,17 @@ CREATE TABLE refresh_tokens (
 );
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
 
+-- 12. USER FEATURE ONBOARDINGS (Contextual Coach Marks status)
+CREATE TABLE user_feature_onboardings (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    feature_key  VARCHAR(50) NOT NULL,
+    completed    BOOLEAN NOT NULL DEFAULT TRUE,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_user_feature_onboarding UNIQUE (user_id, feature_key)
+);
+CREATE INDEX idx_user_feature_onboarding_user ON user_feature_onboardings (user_id);
+
 -- AUTO-UPDATE updated_at TRIGGER
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -247,35 +262,35 @@ INSERT INTO users (email, password_hash, role, full_name)
 VALUES ('admin@enigma.edu.vn', 'REPLACE_WITH_BCRYPT_HASH', 'admin', 'Admin He Thong');
 
 INSERT INTO achievements (code, title, description, icon_code, unlock_condition) VALUES
-('first_checkin',  'First Day!',       'You checked in for the first time.',          'emoji_events',          '{"type": "checkin_count", "value": 1}'),
-('streak_3',       'Streak 3 Days',    'Checked in 3 days in a row.',                 'local_fire_department', '{"type": "streak", "value": 3}'),
-('streak_7',       'Streak 7 Days',    'Checked in 7 days in a row.',                 'whatshot',              '{"type": "streak", "value": 7}'),
-('streak_30',      'Champion 30 Days', 'Checked in 30 consecutive days!',             'military_tech',         '{"type": "streak", "value": 30}'),
-('first_journal',  'Inner Explorer',   'Wrote your first emotion journal.',           'book',                  '{"type": "journal_count", "value": 1}'),
-('task_prep_done', 'Ready to Go!',     'Completed all Preparation phase tasks.',      'backpack',              '{"type": "phase_complete", "value": "preparation"}'),
-('first_chat',     'AI Friend',        'Had your first conversation with Enigma AI.', 'smart_toy',             '{"type": "chat_count", "value": 1}');
+('first_checkin',  'Ngày đầu tiên!',    'Bạn đã thực hiện lượt điểm danh đầu tiên.',  'emoji_events',          '{"type": "checkin_count", "value": 1}'),
+('streak_3',       'Chuỗi 3 ngày',      'Điểm danh liên tục 3 ngày.',                 'local_fire_department', '{"type": "streak", "value": 3}'),
+('streak_7',       'Chuỗi 7 ngày',      'Điểm danh liên tục 7 ngày.',                 'whatshot',              '{"type": "streak", "value": 7}'),
+('streak_30',      'Chiến binh 30 ngày','Điểm danh liên tục 30 ngày!',                'military_tech',         '{"type": "streak", "value": 30}'),
+('first_journal',  'Thấu cảm nội tâm',  'Viết trang nhật ký cảm xúc đầu tiên.',       'book',                  '{"type": "journal_count", "value": 1}'),
+('task_prep_done', 'Sẵn sàng lên đường!','Hoàn thành tất cả nhiệm vụ chặng Chuẩn bị.','backpack',             '{"type": "phase_complete", "value": "preparation"}'),
+('first_chat',     'Bạn đồng hành AI',  'Trò chuyện lần đầu cùng trợ lý Enigma AI.',  'smart_toy',             '{"type": "chat_count", "value": 1}');
 
 INSERT INTO tasks (phase, pillar, title, description, duration_minutes, unlock_day, sort_order) VALUES
-('preparation', 'mental',   'Read the LG Display handbook',              'Learn about company culture, 5S rules and what to bring.', 15, 0, 1),
-('preparation', 'physical', 'Prepare a basic first aid kit',             'Prepare bandages, eye drops, digestive medicine for the new environment.', 10, 0, 2),
-('preparation', 'sleep',    'Practice sleeping before 11:30 PM',        'Adjust your biological clock before starting work.', 0, 0, 3),
-('preparation', 'social',   'Join the intern group chat',                'Join the Zalo/Facebook group of your intern batch.', 10, 0, 4),
-('preparation', 'career',   'Define your internship goals',              'Write down 3 things you want to learn in the next 3 months.', 15, 0, 5),
-('adaptation',  'mental',   'Box Breathing: Overcome first-day anxiety', 'Practice 4-4-4-4 breathing for 3 minutes to reduce stress.', 3, 1, 10),
-('adaptation',  'sleep',    'No caffeine after 3 PM',                   'Avoid coffee/energy drinks after 3 PM to sleep better at night.', 0, 2, 11),
-('adaptation',  'physical', 'Neck and shoulder stretch after shift',     'Do 3 neck rotation and shoulder stretching moves.', 5, 3, 12),
-('adaptation',  'social',   'Have lunch with a new colleague',           'Expand communication and ask senior staff about their experience.', 30, 5, 13),
-('adaptation',  'career',   'First week review: What did I learn?',      'Write down basic processes and machine operations you were taught.', 15, 7, 14),
-('adaptation',  'mental',   'Emotion check-in: Identify pressure',      'Use your journal to write down current difficulties.', 10, 10, 15),
-('adaptation',  'physical', 'Warm foot soak before bed',                'Helps relax blood vessels and relieve fatigue from standing all day.', 15, 12, 16),
-('adaptation',  'sleep',    'Turn off screens 30 min before bed',        'Reduce blue light exposure to help the brain relax.', 30, 15, 17),
-('adaptation',  'social',   'Share a difficulty with your team leader',  'Do not hesitate to ask if you are stuck on a work operation.', 15, 20, 18),
-('adaptation',  'career',   'Month 1 review: What did I achieve?',       'Look back at the past month and reward yourself for adapting.', 15, 30, 19),
-('sustain',     'physical', 'Light exercise 15 minutes daily',          'Maintain exercise habits to build endurance for the coming months.', 15, 31, 20),
-('sustain',     'mental',   'Financial management: Cut unnecessary costs','Read a guide on budgeting and build an emergency fund.', 10, 40, 21),
-('sustain',     'sleep',    'Keep a fixed sleep schedule (even weekends)','Prevents your body from getting confused between shifts.', 0, 45, 22),
-('sustain',     'career',   'Study an advanced work process',            'Ask your manager about deeper principles of the equipment you operate.', 20, 50, 23),
-('sustain',     'social',   'Organize a small outing with your group',   'Recharge energy and strengthen team bonds.', 120, 60, 24),
-('sustain',     'mental',   'Burnout check',                             'Practice a stress assessment test to see if you are overloaded.', 5, 75, 25),
-('sustain',     'career',   'Update your CV with internship experience', 'Document your achievements and skills gained over 3 months.', 30, 85, 26),
-('sustain',     'social',   'Say thank you and stay connected',          'Thank those who guided you and get their contact info.', 15, 90, 27);
+('preparation', 'mental',   'Đọc cẩm nang "Hành trang LG Display"',              'Tìm hiểu trước về văn hóa công ty, quy định 5S và các vật dụng cần thiết mang theo khi đi làm.', 15, 0, 1),
+('preparation', 'physical', 'Chuẩn bị đồ dùng cá nhân y tế cơ bản',             'Chuẩn bị urgo, thuốc nhỏ mắt, thuốc tiêu hóa và các loại thuốc cơ bản để sẵn sàng cho môi trường mới.', 10, 0, 2),
+('preparation', 'sleep',    'Tập ngủ sớm trước 23:30',                          'Điều chỉnh nhịp sinh học trước khi chính thức đi làm để không bị mệt mỏi trong những ngày đầu.', 0, 0, 3),
+('preparation', 'social',   'Kết nối nhóm sinh viên cùng đợt',                  'Tham gia group Zalo/Facebook của đợt thực tập để trao đổi thông tin và tìm bạn đồng hành.', 10, 0, 4),
+('preparation', 'career',   'Xác định mục tiêu thực tập',                       'Viết ra 3 điều bạn muốn học được sau 3 tháng tới (kỹ năng cứng, mềm, mối quan hệ).', 15, 0, 5),
+('adaptation',  'mental',   'Tập hít thở 4-4-4-4: Vượt qua bỡ ngỡ ngày đầu',    'Tập hít thở chậm rãi trong 3 phút để giảm căng thẳng khi tiếp xúc với môi trường sản xuất quy mô lớn.', 3, 1, 10),
+('adaptation',  'sleep',    'Làm quen nhịp ca kíp: Không uống cà phê chiều',    'Tránh uống cà phê hoặc nước tăng lực sau 15h để đảm bảo có thể ngủ sâu vào ban đêm.', 0, 2, 11),
+('adaptation',  'physical', 'Giãn cơ vai gáy sau ca làm',                       'Thực hiện 3 động tác xoay cổ và căng vai gáy để tránh nhức mỏi.', 5, 3, 12),
+('adaptation',  'social',   'Ăn trưa cùng một đồng nghiệp mới',                 'Mở rộng giao tiếp, hỏi han về kinh nghiệm làm việc của các anh chị đi trước.', 30, 5, 13),
+('adaptation',  'career',   'Đánh giá tuần đầu: Những bài học đã tích lũy',      'Ghi lại các quy trình cơ bản và thao tác máy móc bạn đã được hướng dẫn.', 15, 7, 14),
+('adaptation',  'mental',   'Điểm danh cảm xúc: Nhận diện áp lực ca kíp',        'Sử dụng nhật ký để viết ra những khó khăn đang gặp phải (đứng lâu, không quen việc...).', 10, 10, 15),
+('adaptation',  'physical', 'Ngâm chân nước ấm',                                'Giúp dãn mạch máu vùng bàn chân, xua tan cảm giác mỏi nhức do đứng làm việc lâu.', 15, 12, 16),
+('adaptation',  'sleep',    'Tắt màn hình 30p trước khi ngủ',                   'Giảm tiếp xúc ánh sáng xanh để não bộ thư giãn.', 30, 15, 17),
+('adaptation',  'social',   'Chia sẻ một khó khăn với quản lý/nhóm trưởng',     'Đừng ngại hỏi hoặc chia sẻ nếu bạn đang gặp bế tắc trong thao tác công việc.', 15, 20, 18),
+('adaptation',  'career',   'Đánh giá tháng 1: Bạn đã làm được gì?',            'Nhìn lại 1 tháng vừa qua, tự thưởng cho bản thân vì đã nỗ lực thích nghi.', 15, 30, 19),
+('sustain',     'physical', 'Tập thể dục nhẹ 15 phút mỗi ngày',                 'Duy trì thói quen vận động để tăng sức bền cho những tháng tiếp theo.', 15, 31, 20),
+('sustain',     'mental',   'Quản lý tài chính: Cắt giảm chi phí thừa',         'Đọc cẩm nang về quản lý chi tiêu và lập quỹ phòng hờ.', 10, 40, 21),
+('sustain',     'sleep',    'Xây dựng thói quen ngủ cố định (kể cả ngày nghỉ)', 'Giúp cơ thể không bị rối loạn nhịp sinh học giữa các ca làm việc.', 0, 45, 22),
+('sustain',     'career',   'Tìm hiểu một quy trình làm việc nâng cao',         'Hỏi quản lý hoặc tài liệu công ty về nguyên lý hoạt động sâu hơn của máy móc bạn đang phụ trách.', 20, 50, 23),
+('sustain',     'social',   'Tổ chức một buổi đi chơi nhỏ cùng phòng trọ/nhóm', 'Tái tạo năng lượng và thắt chặt tình cảm anh em.', 120, 60, 24),
+('sustain',     'mental',   'Kiểm soát và phòng ngừa kiệt sức',                 'Thực hành bài kiểm tra mức độ căng thẳng để xem bạn có đang quá sức không.', 5, 75, 25),
+('sustain',     'career',   'Cập nhật hồ sơ xin việc (CV) với kinh nghiệm thực tập','Ghi lại những thành tích, số liệu và kỹ năng bạn đã tích lũy được trong 3 tháng qua.', 30, 85, 26),
+('sustain',     'social',   'Nói lời cảm ơn và giữ liên lạc',                   'Cảm ơn những người đã hướng dẫn bạn và xin thông tin liên lạc để duy trì kết nối đồng nghiệp.', 15, 90, 27);
