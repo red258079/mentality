@@ -15,8 +15,43 @@
   <!-- Toast Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
+  <!-- Login Screen for Admin -->
+  <div id="login-screen" class="login-screen" style="display: none;">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-icon">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <h2>ENIGMA ADMIN</h2>
+        <p>Cổng Quản Trị Hệ Thống Sức Khỏe &amp; Thích Nghi Thực Tập</p>
+      </div>
+
+      <div id="admin-login-error" class="login-error-alert" style="display: none;"></div>
+
+      <form id="admin-login-form" autocomplete="on">
+        <div class="form-group">
+          <label class="form-label" for="admin-login-email">Email Quản Trị Viên</label>
+          <input type="email" id="admin-login-email" class="form-input" placeholder="admin@enigma.vn" required autocomplete="username">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="admin-login-password">Mật Khẩu</label>
+          <input type="password" id="admin-login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+
+        <button type="submit" id="btn-admin-login-submit" class="btn-submit-login">
+          <span>Đăng Nhập Quản Trị</span>
+        </button>
+      </form>
+
+      <p class="login-footer-hint">Chỉ tài khoản có phân quyền Admin mới được phép truy cập.</p>
+    </div>
+  </div>
+
   <!-- Layout Wrapper -->
-  <div class="app-container">
+  <div class="app-container" id="app-container">
     
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
@@ -62,6 +97,15 @@
           </svg>
           <span>Quản Lý Sinh Viên</span>
           <span class="badge badge-info" id="nav-badge-students">--</span>
+        </button>
+
+        <button class="nav-item" data-tab="pending" title="Duyệt Đơn Vị Đề Xuất (Chờ Duyệt)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>Chờ Duyệt</span>
+          <span class="badge badge-warning" id="nav-badge-pending" style="display: none;">0</span>
         </button>
 
         <button class="nav-item highlight-danger" data-tab="burnout" title="Cảnh Báo Kiệt Sức">
@@ -118,8 +162,15 @@
           <div class="avatar" id="admin-avatar">AD</div>
           <div class="admin-info">
             <span class="admin-name" id="admin-display-name">Cố Vấn Trưởng</span>
-            <span class="admin-role">Admin Quyền Cao</span>
+            <span class="admin-role">Admin Quản Trị</span>
           </div>
+          <button type="button" class="icon-btn logout-btn" id="btn-admin-logout" title="Đăng xuất khỏi hệ thống" aria-label="Đăng xuất">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </button>
         </div>
       </div>
     </aside>
@@ -191,7 +242,7 @@
             <div class="kpi-value" id="kpi-total-students">--</div>
             <div class="kpi-footer">
               <span class="trend-badge positive">↑ 100% tài khoản</span>
-              <span class="kpi-caption">Tại LG Display & đối tác</span>
+              <span class="kpi-caption">Tại nơi thực tập & đối tác</span>
             </div>
           </div>
 
@@ -524,6 +575,106 @@
 
       </section>
 
+      <!-- TAB PENDING: DUYỆT ĐỀ XUẤT TRƯỜNG & CÔNG TY -->
+      <section class="tab-pane" id="pane-pending">
+        
+        <!-- Quick Stat Strip for Pending Review -->
+        <div class="students-stat-strip">
+          <div class="stat-mini-card active" id="stat-pending-all">
+            <div class="stat-mini-icon icon-amber">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </div>
+            <div class="stat-mini-data">
+              <span class="stat-mini-label">Mục Chờ Duyệt</span>
+              <strong class="stat-mini-value text-amber" id="pending-count-total">0</strong>
+            </div>
+            <span class="stat-mini-tag tag-amber">Cần xem xét</span>
+          </div>
+
+          <div class="stat-mini-card" id="stat-pending-uni">
+            <div class="stat-mini-icon icon-primary">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 21h18"/>
+                <path d="M5 21V7l7-4 7 4v14"/>
+                <path d="M9 21v-6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v6"/>
+              </svg>
+            </div>
+            <div class="stat-mini-data">
+              <span class="stat-mini-label">Trường Đại Học</span>
+              <strong class="stat-mini-value" id="pending-count-uni">0</strong>
+            </div>
+            <span class="stat-mini-tag">Đề xuất</span>
+          </div>
+
+          <div class="stat-mini-card" id="stat-pending-comp">
+            <div class="stat-mini-icon icon-indigo">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+            </div>
+            <div class="stat-mini-data">
+              <span class="stat-mini-label">Nơi Thực Tập</span>
+              <strong class="stat-mini-value" id="pending-count-comp">0</strong>
+            </div>
+            <span class="stat-mini-tag">Đề xuất</span>
+          </div>
+        </div>
+
+        <!-- Controls Toolbar -->
+        <div class="students-toolbar">
+          <div class="toolbar-top-row">
+            <div class="search-box">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" id="pending-search-input" placeholder="Tìm theo tên trường, nơi thực tập, người đề xuất, email...">
+            </div>
+
+            <div class="toolbar-selects">
+              <select id="pending-filter-type" class="select-control" title="Lọc theo loại đề xuất">
+                <option value="">Tất cả loại đề xuất</option>
+                <option value="university">🏛️ Trường Đại Học</option>
+                <option value="company">🏢 Công Ty / Nơi Thực Tập</option>
+              </select>
+
+              <button class="btn btn-secondary btn-icon" id="btn-refresh-pending" title="Tải lại danh sách chờ duyệt">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6"/>
+                  <path d="M1 20v-6h6"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                <span>Làm Mới</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pending Items Table Wrapper -->
+        <div class="table-wrapper">
+          <table class="data-table" id="pending-table">
+            <thead>
+              <tr>
+                <th style="width: 140px;">Loại Đơn Vị</th>
+                <th style="width: 250px;">Tên Đề Xuất (Mục Chờ Duyệt)</th>
+                <th style="width: 200px;">Người Đề Xuất</th>
+                <th style="width: 140px;">Thời Gian Gửi</th>
+                <th style="width: 110px;" class="text-center">SV Liên Kết</th>
+                <th style="width: 320px;" class="text-right">Xét Duyệt &amp; Chuẩn Hóa</th>
+              </tr>
+            </thead>
+            <tbody id="pending-tbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+      </section>
+
       <!-- TAB 3: BURNOUT ALERT CENTER -->
       <section class="tab-pane" id="pane-burnout">
         
@@ -724,12 +875,15 @@
               </div>
 
               <div class="form-group">
-                <label class="form-label">Admin Bearer Token</label>
-                <input type="password" id="setting-admin-token" class="form-input" value="enigma_admin_master_secret">
-                <small class="form-hint">Mã token bí mật dùng để gọi API quản trị</small>
+                <label class="form-label">Tài Khoản Quản Trị Đang Đăng Nhập</label>
+                <input type="text" id="setting-admin-account" class="form-input" readonly value="Chưa xác thực">
+                <small class="form-hint">Phiên làm việc bảo mật qua JWT Token của tài khoản Admin</small>
               </div>
 
-              <button class="btn btn-primary" id="btn-save-settings">Lưu Cấu Hình</button>
+              <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;">
+                <button class="btn btn-primary" id="btn-save-settings">Lưu Cấu Hình URL</button>
+                <button class="btn btn-danger" id="btn-settings-logout" type="button" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: #fb7185; cursor: pointer; padding: 0.65rem 1.25rem; border-radius: var(--radius-md); font-weight: 600;">Đăng Xuất</button>
+              </div>
             </div>
           </div>
 
@@ -787,7 +941,7 @@
             <div>
               <h4 id="um-name-card">Nguyễn Văn A</h4>
               <p class="text-subtle" id="um-email">email@sinhvien.edu.vn</p>
-              <p class="text-subtle" id="um-company">LG Display — Ban Sản Xuất</p>
+              <p class="text-subtle" id="um-company">Chưa chọn nơi thực tập</p>
             </div>
           </div>
 
@@ -964,7 +1118,7 @@
               <span class="im-badge" id="im-student-id">23050067</span>
               <span class="im-phase-tag" id="im-phase">Giai đoạn: Chuẩn bị</span>
             </div>
-            <p class="im-meta text-xs text-muted" id="im-workplace">LG Display &bull; Ca ngày (8h-20h)</p>
+            <p class="im-meta text-xs text-muted" id="im-workplace">Chưa chọn nơi thực tập &bull; Ca ngày (8h-20h)</p>
             <div class="im-metrics-strip" id="im-metrics">
               <span class="im-metric-pill" id="im-stress-pill">Stress: <strong>2/5</strong></span>
               <span class="im-metric-pill" id="im-sleep-pill">Giấc ngủ: <strong>7.0h</strong></span>

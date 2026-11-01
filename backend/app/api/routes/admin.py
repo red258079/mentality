@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
+from sqlalchemy.orm import aliased
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from uuid import UUID
@@ -15,7 +16,42 @@ from app.db.models.task import Task, UserTaskProgress
 from app.db.models.notification_log import NotificationLog, NotificationType
 from app.db.models.journal import Journal
 
+from app.db.models.catalog import University, Company
+from app.schemas.catalog import AdminCatalogReviewRequest
+from app.services import user_service
+
 router = APIRouter()
+
+
+async def get_authed_admin(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Verifies that the caller has a valid Bearer token for an active admin account."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Chưa xác thực quyền quản trị. Yêu cầu Bearer token."
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    user = await user_service.get_current_user(db, token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token quản trị không hợp lệ hoặc đã hết hạn."
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản quản trị đã bị vô hiệu hóa."
+        )
+    user_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if user_role != UserRole.admin.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Yêu cầu tài khoản có phân quyền quản trị viên (Admin)."
+        )
+    return user
 
 
 @router.get("/stats", summary="Lấy số liệu thống kê tổng quan cho Admin Dashboard")
@@ -76,16 +112,19 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/users", summary="Lấy danh sách sinh viên thực tập kèm chỉ số")
-async def get_admin_users(db: AsyncSession = Depends(get_db)):
+@router.get("/students", summary="Lấy danh sách sinh viên thực tập kèm thông tin trường và công ty chuẩn hóa")
+async def get_admin_students(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(User, InternProfile, UserStreak)
+        select(User, InternProfile, UserStreak, University, Company)
         .outerjoin(InternProfile, User.id == InternProfile.user_id)
         .outerjoin(UserStreak, User.id == UserStreak.user_id)
-        .order_by(User.created_at.desc())
+        .outerjoin(University, User.university_id == University.id)
+        .outerjoin(Company, InternProfile.company_id == Company.id)
+        .order_by(University.name.asc().nullslast(), User.university_id.asc().nullslast(), User.created_at.desc())
     )
     rows = result.all()
 
-    user_ids = [u.id for u, p, s in rows]
+    user_ids = [u.id for u, p, s, uni, comp in rows]
     latest_sleep_map: Dict[Any, Optional[float]] = {}
     latest_stress_map: Dict[Any, Optional[int]] = {}
     latest_date_map: Dict[Any, Optional[str]] = {}
@@ -126,17 +165,33 @@ async def get_admin_users(db: AsyncSession = Depends(get_db)):
             latest_note_map[r.user_id] = r.note
 
     students = []
-    for u, p, s in rows:
+    for u, p, s, uni, comp in rows:
         latest_sleep = latest_sleep_map.get(u.id)
         latest_stress = latest_stress_map.get(u.id)
+
+        uni_is_appr = bool(uni and u.university_id and uni.is_approved)
+        uni_name = uni.name if uni_is_appr else "Chưa phân loại"
+        uni_short = uni.short_name if uni_is_appr else None
+        uni_pending_name = uni.name if (uni and u.university_id and not uni.is_approved) else None
+
+        comp_is_appr = bool(comp and p and p.company_id and comp.is_approved)
+        comp_name = comp.name if comp_is_appr else "Chưa chọn nơi thực tập"
+        comp_pending_name = comp.name if (comp and p and p.company_id and not comp.is_approved) else None
+
         students.append({
             "id": str(u.id),
             "student_id": u.student_id or "SV-LG",
             "full_name": u.full_name,
             "email": u.email,
-            "university": u.university or "Đại học / Cao đẳng liên kết",
+            "university_id": str(u.university_id) if u.university_id else None,
+            "university_name": uni_name,
+            "university_pending_name": uni_pending_name,
+            "university_short_name": uni_short,
+            "university": u.university.strip() if (u.university and u.university.strip()) else "Chưa phân loại",
             "major": u.major or "Kỹ thuật / Công nghệ",
-            "company_name": p.company_name if (p and p.company_name) else None,
+            "company_id": str(p.company_id) if (p and p.company_id) else None,
+            "company_name": comp_name,
+            "company_pending_name": comp_pending_name,
             "department": p.department if (p and p.department) else None,
             "work_shift": p.work_shift if (p and p.work_shift) else None,
             "workplace_type": p.workplace_type if (p and p.workplace_type) else None,
@@ -154,6 +209,235 @@ async def get_admin_users(db: AsyncSession = Depends(get_db)):
     return students
 
 
+@router.get("/catalog/pending", summary="Lấy danh sách các trường và công ty do sinh viên đề xuất đang chờ duyệt")
+async def get_pending_catalog(
+    admin_user: User = Depends(get_authed_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    SubUserUni = aliased(User)
+    PointUser = aliased(User)
+    uni_query = (
+        select(
+            University,
+            SubUserUni,
+            func.count(PointUser.id).label("user_count")
+        )
+        .outerjoin(SubUserUni, University.submitted_by_user_id == SubUserUni.id)
+        .outerjoin(PointUser, PointUser.university_id == University.id)
+        .where(University.is_approved == False)
+        .group_by(University.id, SubUserUni.id)
+        .order_by(University.created_at.desc())
+    )
+    uni_res = await db.execute(uni_query)
+
+    SubUserComp = aliased(User)
+    comp_query = (
+        select(
+            Company,
+            SubUserComp,
+            func.count(InternProfile.id).label("user_count")
+        )
+        .outerjoin(SubUserComp, Company.submitted_by_user_id == SubUserComp.id)
+        .outerjoin(InternProfile, InternProfile.company_id == Company.id)
+        .where(Company.is_approved == False)
+        .group_by(Company.id, SubUserComp.id)
+        .order_by(Company.created_at.desc())
+    )
+    comp_res = await db.execute(comp_query)
+
+    items = []
+    for u, submitter, count in uni_res.all():
+        items.append({
+            "id": str(u.id),
+            "name": u.name,
+            "short_name": u.short_name,
+            "code": u.code,
+            "type": "university",
+            "submitted_by": {
+                "id": str(submitter.id),
+                "full_name": submitter.full_name,
+                "email": submitter.email,
+            } if submitter else None,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "count": count,
+            "user_count": count,
+        })
+
+    for c, submitter, count in comp_res.all():
+        items.append({
+            "id": str(c.id),
+            "name": c.name,
+            "short_name": c.short_name,
+            "code": c.code,
+            "type": "company",
+            "submitted_by": {
+                "id": str(submitter.id),
+                "full_name": submitter.full_name,
+                "email": submitter.email,
+            } if submitter else None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "count": count,
+            "user_count": count,
+        })
+
+    items.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return items
+
+
+@router.post("/catalog/review", summary="Duyệt (approve), gộp (merge) hoặc từ chối (reject) đơn vị đề xuất")
+async def review_catalog_entry(
+    payload: AdminCatalogReviewRequest,
+    admin_user: User = Depends(get_authed_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    if payload.action not in ["approve", "merge", "reject"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Hành động không hợp lệ. Chỉ chấp nhận approve, merge hoặc reject."
+        )
+
+    if payload.entity_type == "university":
+        target_res = await db.execute(select(University).where(University.id == payload.entity_id))
+        entity = target_res.scalar_one_or_none()
+        if not entity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy trường đại học cần xét duyệt."
+            )
+
+        if entity.is_approved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Trường này đã được phê duyệt trước đó, chỉ có thể xét duyệt các trường đang chờ duyệt."
+            )
+
+        if payload.action == "approve":
+            entity.is_approved = True
+            await db.commit()
+            return {"message": f"Đã phê duyệt trường '{entity.name}' vào danh mục chính thức."}
+
+        elif payload.action == "merge":
+            if not payload.target_canonical_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cần chỉ định target_canonical_id khi chọn gộp đơn vị."
+                )
+            if payload.target_canonical_id == entity.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Không thể gộp đơn vị vào chính nó."
+                )
+
+            canonical_res = await db.execute(
+                select(University).where(
+                    and_(University.id == payload.target_canonical_id, University.is_approved == True)
+                )
+            )
+            canonical = canonical_res.scalar_one_or_none()
+            if not canonical:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Không tìm thấy trường chuẩn hóa đích hợp lệ (hoặc chưa được duyệt) để gộp vào."
+                )
+
+            # Repoint users.university_id from entity to target
+            user_merge_res = await db.execute(select(User).where(User.university_id == entity.id))
+            affected_users = user_merge_res.scalars().all()
+            for u in affected_users:
+                u.university_id = canonical.id
+
+            await db.delete(entity)
+            await db.commit()
+            return {
+                "message": f"Đã gộp thành công '{entity.name}' vào '{canonical.name}'. Cập nhật {len(affected_users)} sinh viên."
+            }
+
+        elif payload.action == "reject":
+            # Repoint users.university_id to NULL
+            user_merge_res = await db.execute(select(User).where(User.university_id == entity.id))
+            affected_users = user_merge_res.scalars().all()
+            for u in affected_users:
+                u.university_id = None
+
+            await db.delete(entity)
+            await db.commit()
+            return {"message": f"Đã từ chối và xóa đề xuất trường '{entity.name}'."}
+
+    elif payload.entity_type == "company":
+        target_res = await db.execute(select(Company).where(Company.id == payload.entity_id))
+        entity = target_res.scalar_one_or_none()
+        if not entity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy công ty/nơi thực tập cần xét duyệt."
+            )
+
+        if entity.is_approved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nơi thực tập này đã được phê duyệt trước đó, chỉ có thể xét duyệt các đơn vị đang chờ duyệt."
+            )
+
+        if payload.action == "approve":
+            entity.is_approved = True
+            await db.commit()
+            return {"message": f"Đã phê duyệt nơi thực tập '{entity.name}' vào danh mục chính thức."}
+
+        elif payload.action == "merge":
+            if not payload.target_canonical_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cần chỉ định target_canonical_id khi chọn gộp đơn vị."
+                )
+            if payload.target_canonical_id == entity.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Không thể gộp đơn vị vào chính nó."
+                )
+
+            canonical_res = await db.execute(
+                select(Company).where(
+                    and_(Company.id == payload.target_canonical_id, Company.is_approved == True)
+                )
+            )
+            canonical = canonical_res.scalar_one_or_none()
+            if not canonical:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Không tìm thấy công ty chuẩn hóa đích hợp lệ (hoặc chưa được duyệt) để gộp vào."
+                )
+
+            # Repoint intern_profiles.company_id from entity to target
+            prof_res = await db.execute(select(InternProfile).where(InternProfile.company_id == entity.id))
+            affected_profiles = prof_res.scalars().all()
+            for p in affected_profiles:
+                p.company_id = canonical.id
+
+            await db.delete(entity)
+            await db.commit()
+            return {
+                "message": f"Đã gộp thành công '{entity.name}' vào '{canonical.name}'. Cập nhật {len(affected_profiles)} hồ sơ."
+            }
+
+        elif payload.action == "reject":
+            # Repoint intern_profiles.company_id to NULL
+            prof_res = await db.execute(select(InternProfile).where(InternProfile.company_id == entity.id))
+            affected_profiles = prof_res.scalars().all()
+            for p in affected_profiles:
+                p.company_id = None
+
+            await db.delete(entity)
+            await db.commit()
+            return {"message": f"Đã từ chối và xóa đề xuất nơi thực tập '{entity.name}'."}
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="entity_type phải là 'university' hoặc 'company'."
+        )
+
+
+
 class UserStatusUpdateRequest(BaseModel):
     is_active: bool
 
@@ -161,16 +445,18 @@ class UserStatusUpdateRequest(BaseModel):
 @router.get("/users/{user_id}", summary="Lấy chi tiết sinh viên và lịch sử nhật ký gần nhất")
 async def get_admin_user_detail(user_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(User, InternProfile, UserStreak)
+        select(User, InternProfile, UserStreak, University, Company)
         .outerjoin(InternProfile, User.id == InternProfile.user_id)
         .outerjoin(UserStreak, User.id == UserStreak.user_id)
+        .outerjoin(University, User.university_id == University.id)
+        .outerjoin(Company, InternProfile.company_id == Company.id)
         .where(User.id == user_id)
     )
     row = result.first()
     if not row:
         raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
 
-    u, p, s = row
+    u, p, s, uni, comp = row
 
     journals_res = await db.execute(
         select(Journal)
@@ -188,12 +474,25 @@ async def get_admin_user_detail(user_id: UUID, db: AsyncSession = Depends(get_db
         "career": p.initial_career_score if (p and p.initial_career_score is not None) else 80,
     }
 
+    uni_is_appr = bool(uni and u.university_id and uni.is_approved)
+    uni_name = uni.name if uni_is_appr else "Chưa phân loại"
+    uni_short = uni.short_name if uni_is_appr else None
+    uni_pending_name = uni.name if (uni and u.university_id and not uni.is_approved) else None
+
+    comp_is_appr = bool(comp and p and p.company_id and comp.is_approved)
+    comp_name = comp.name if comp_is_appr else "Chưa chọn nơi thực tập"
+    comp_pending_name = comp.name if (comp and p and p.company_id and not comp.is_approved) else None
+
     return {
         "user": {
             "id": str(u.id),
             "full_name": u.full_name,
             "student_id": u.student_id or None,
             "email": u.email,
+            "university_id": str(u.university_id) if u.university_id else None,
+            "university_name": uni_name,
+            "university_pending_name": uni_pending_name,
+            "university_short_name": uni_short,
             "university": u.university or None,
             "major": u.major or None,
             "is_active": u.is_active,
@@ -201,7 +500,9 @@ async def get_admin_user_detail(user_id: UUID, db: AsyncSession = Depends(get_db
             "created_at": u.created_at.isoformat() if u.created_at else None,
         },
         "profile": {
-            "company_name": p.company_name if (p and p.company_name) else None,
+            "company_id": str(p.company_id) if (p and p.company_id) else None,
+            "company_name": comp_name,
+            "company_pending_name": comp_pending_name,
             "department": p.department if (p and p.department) else None,
             "work_shift": p.work_shift if (p and p.work_shift) else None,
             "workplace_type": p.workplace_type if (p and p.workplace_type) else None,

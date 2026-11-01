@@ -16,10 +16,10 @@ class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
 
   @override
-  State<TasksScreen> createState() => _TasksScreenState();
+  State<TasksScreen> createState() => TasksScreenState();
 }
 
-class _TasksScreenState extends State<TasksScreen> with SingleTickerProviderStateMixin {
+class TasksScreenState extends State<TasksScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   List<RecoveryTask> _apiTasks = [];
   bool _isLoading = true;
@@ -34,6 +34,8 @@ class _TasksScreenState extends State<TasksScreen> with SingleTickerProviderStat
     _tabController = TabController(length: 3, vsync: this);
     _loadTasks();
   }
+
+  void startTour({bool force = false}) => _startTour(force: force);
 
   void _startTour({bool force = false}) {
     FeatureTour.start(

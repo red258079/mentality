@@ -10,6 +10,12 @@ class UserModel {
   final bool isActive;
   final String? companyName;
   final String? currentPhase;
+  final String? universityId;
+  final String? universityName;
+  final bool? universityIsPending;
+  final String? companyId;
+  final bool? companyIsPending;
+  final bool? isPending;
 
   UserModel({
     required this.id,
@@ -23,6 +29,12 @@ class UserModel {
     this.isActive = true,
     this.companyName = 'LG Display',
     this.currentPhase = 'adaptation',
+    this.universityId,
+    this.universityName,
+    this.universityIsPending,
+    this.companyId,
+    this.companyIsPending,
+    this.isPending,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -38,6 +50,12 @@ class UserModel {
       isActive: json['is_active'] ?? true,
       companyName: json['company_name'] ?? 'LG Display',
       currentPhase: json['current_phase'] ?? 'adaptation',
+      universityId: json['university_id']?.toString(),
+      universityName: json['university_name'],
+      universityIsPending: json['university_is_pending'] as bool?,
+      companyId: json['company_id']?.toString(),
+      companyIsPending: json['company_is_pending'] as bool?,
+      isPending: json['is_pending'] as bool?,
     );
   }
 
@@ -54,6 +72,12 @@ class UserModel {
       'is_active': isActive,
       'company_name': companyName,
       'current_phase': currentPhase,
+      'university_id': universityId,
+      'university_name': universityName,
+      'university_is_pending': universityIsPending,
+      'company_id': companyId,
+      'company_is_pending': companyIsPending,
+      'is_pending': isPending,
     };
   }
 

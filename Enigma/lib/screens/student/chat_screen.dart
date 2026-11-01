@@ -18,10 +18,10 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, this.initialContext});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreen> createState() => ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final List<ChatMessage> _messages = [];
@@ -62,6 +62,8 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
   }
+
+  void startTour({bool force = false}) => _startTour(force: force);
 
   void _startTour({bool force = false}) {
     FeatureTour.start(

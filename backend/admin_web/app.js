@@ -40,7 +40,7 @@
   // ─── Application State ────────────────────────────────────────────────────────
   const STATE = {
     apiBaseUrl: getInitialApiUrl(),
-    adminToken: localStorage.getItem('enigma_admin_token') || 'enigma_admin_master_secret',
+    adminToken: localStorage.getItem('enigma_admin_token') || null,
     isDemoMode: false,
     activeTab: 'dashboard',
     activeTaskPhase: 'preparation',
@@ -53,6 +53,9 @@
     tasks: [],
     notifications: [],
     feed: [],
+    pendingCatalog: [],
+    approvedUniversities: [],
+    approvedCompanies: [],
     studentPillFilter: 'all',
     studentsViewMode: localStorage.getItem('enigma_students_view_mode') || 'grouped',
     selectedUniversity: '',
@@ -137,13 +140,31 @@
     broadcastForm: document.getElementById('broadcast-form'),
     notificationHistoryList: document.getElementById('notification-history-list'),
 
-    // Settings
+    // Pending Catalog Review
+    navBadgePending: document.getElementById('nav-badge-pending'),
+    pendingSearchInput: document.getElementById('pending-search-input'),
+    pendingFilterType: document.getElementById('pending-filter-type'),
+    btnRefreshPending: document.getElementById('btn-refresh-pending'),
+    pendingTbody: document.getElementById('pending-tbody'),
+
+    // Settings & Account
     settingApiUrl: document.getElementById('setting-api-url'),
-    settingAdminToken: document.getElementById('setting-admin-token'),
+    settingAdminAccount: document.getElementById('setting-admin-account'),
     btnSaveSettings: document.getElementById('btn-save-settings'),
     btnTestConnection: document.getElementById('btn-test-connection'),
     btnExportJson: document.getElementById('btn-export-json'),
     btnClearCache: document.getElementById('btn-clear-cache'),
+    btnAdminLogout: document.getElementById('btn-admin-logout'),
+    btnSettingsLogout: document.getElementById('btn-settings-logout'),
+
+    // Login Screen
+    loginScreen: document.getElementById('login-screen'),
+    appContainer: document.getElementById('app-container'),
+    loginForm: document.getElementById('admin-login-form'),
+    loginEmail: document.getElementById('admin-login-email'),
+    loginPassword: document.getElementById('admin-login-password'),
+    loginError: document.getElementById('admin-login-error'),
+    btnLoginSubmit: document.getElementById('btn-admin-login-submit'),
 
     // Modals
     userModal: document.getElementById('user-modal'),
@@ -176,7 +197,11 @@
       iconSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
     }
 
-    toast.innerHTML = `${iconSvg}<span>${message}</span>`;
+    toast.innerHTML = `${iconSvg}<span></span>`;
+    const msgSpan = toast.querySelector('span');
+    if (msgSpan) {
+      msgSpan.textContent = message;
+    }
     DOM.toastContainer.appendChild(toast);
 
     setTimeout(() => {
@@ -195,6 +220,10 @@
     students: {
       title: 'Quản Lý Sinh Viên Thực Tập',
       subtitle: 'Danh bạ sinh viên, phân loại theo doanh nghiệp, giai đoạn và chỉ số sức khỏe',
+    },
+    pending: {
+      title: 'Duyệt Đơn Vị Đề Xuất (Chờ Duyệt)',
+      subtitle: 'Xem xét phê duyệt, gộp vào đơn vị chuẩn hóa hoặc từ chối các trường và công ty do sinh viên đề xuất',
     },
     burnout: {
       title: 'Trung Tâm Cảnh Báo Kiệt Sức',
@@ -247,6 +276,8 @@
       renderTasksTable();
     } else if (tabName === 'notifications') {
       renderNotificationHistory();
+    } else if (tabName === 'pending') {
+      loadPendingCatalog();
     }
 
     // Close mobile sidebar
@@ -651,9 +682,57 @@
     };
   }
 
-  // ─── API Fetcher with Auto-Fallback ───────────────────────────────────────────
+  // ─── Auth & Screen Control Helpers ────────────────────────────────────────────
+  function showLoginScreen(errorMessage = '') {
+    if (DOM.loginScreen) DOM.loginScreen.style.display = 'flex';
+    if (DOM.appContainer) DOM.appContainer.style.display = 'none';
+    if (DOM.loginError) {
+      if (errorMessage) {
+        DOM.loginError.textContent = errorMessage;
+        DOM.loginError.style.display = 'block';
+      } else {
+        DOM.loginError.textContent = '';
+        DOM.loginError.style.display = 'none';
+      }
+    }
+    if (DOM.loginPassword) DOM.loginPassword.value = '';
+  }
+
+  function hideLoginScreen() {
+    if (DOM.loginScreen) DOM.loginScreen.style.display = 'none';
+    if (DOM.appContainer) DOM.appContainer.style.display = 'flex';
+    if (DOM.loginError) DOM.loginError.style.display = 'none';
+  }
+
+  function updateAdminProfileUI() {
+    try {
+      const userStr = localStorage.getItem('enigma_admin_user');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        const displayName = user.full_name || user.email || 'Quản Trị Viên';
+        const elName = document.getElementById('admin-display-name');
+        const elAvatar = document.getElementById('admin-avatar');
+        if (elName) elName.textContent = displayName;
+        if (elAvatar) elAvatar.textContent = (user.full_name ? user.full_name.charAt(0) : 'A').toUpperCase();
+        if (DOM.settingAdminAccount) DOM.settingAdminAccount.value = `${displayName} (${user.email || ''})`;
+      }
+    } catch (e) {
+      console.warn('Không thể đọc thông tin admin_user:', e);
+    }
+  }
+
+  function logoutAdmin() {
+    localStorage.removeItem('enigma_admin_token');
+    localStorage.removeItem('enigma_admin_user');
+    STATE.adminToken = null;
+    showToast('Đã đăng xuất tài khoản quản trị.', 'info');
+    showLoginScreen();
+  }
+
+  // ─── API Fetcher with Automatic Bearer Header & 401 Interception ───────────────
   async function apiFetch(endpoint, options = {}) {
-    if (STATE.isDemoMode) {
+    if (!STATE.adminToken) {
+      showLoginScreen('Vui lòng đăng nhập bằng tài khoản quản trị để tiếp tục.');
       return null;
     }
 
@@ -667,11 +746,29 @@
     try {
       const response = await fetch(url, { ...options, headers });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        if (response.status === 401) {
+          console.warn(`[AUTH] 401 Unauthorized khi gọi ${endpoint}. Chuyển về màn hình đăng nhập.`);
+          localStorage.removeItem('enigma_admin_token');
+          localStorage.removeItem('enigma_admin_user');
+          STATE.adminToken = null;
+          showLoginScreen('Phiên làm việc đã hết hạn hoặc không có quyền quản trị (401). Vui lòng đăng nhập lại.');
+          return null;
+        }
+        let errDetail = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errBody = await response.json();
+          if (errBody && errBody.detail) errDetail = errBody.detail;
+        } catch (_) {}
+        const error = new Error(errDetail);
+        error.status = response.status;
+        throw error;
       }
       return await response.json();
     } catch (err) {
       console.warn(`[API] Gọi thất bại tới ${endpoint}:`, err.message);
+      if (options.method && options.method !== 'GET') {
+        showToast(err.message, 'error');
+      }
       return null;
     }
   }
@@ -699,6 +796,8 @@
         apiFetch('/admin/notifications/history'),
         apiFetch('/admin/feed')
       ]);
+
+      await loadPendingCatalog();
 
       STATE.students = students || [];
       STATE.alerts = alerts || [];
@@ -984,6 +1083,14 @@
     }
   }
 
+  // ─── University Normalization Helper ──────────────────────────────────────────
+  function getStudentUniLabel(s) {
+    if (s.university_name && s.university_name.trim() && s.university_name.trim() !== 'Chưa phân loại') {
+      return s.university_name.trim();
+    }
+    return 'Chưa phân loại';
+  }
+
   // ─── Render University Quick Chips ───────────────────────────────────────────
   function renderUniversityChips() {
     if (!DOM.universityChipsBar) return;
@@ -992,40 +1099,58 @@
     let totalAll = 0;
     STATE.students.forEach(s => {
       totalAll++;
-      const uni = (s.university && s.university.trim()) ? s.university.trim() : 'Đại học / Cao đẳng liên kết';
-      countsMap.set(uni, (countsMap.get(uni) || 0) + 1);
+      const uniLabel = getStudentUniLabel(s);
+      const groupKey = uniLabel;
+      if (!countsMap.has(groupKey)) {
+        countsMap.set(groupKey, {
+          key: groupKey,
+          label: uniLabel,
+          count: 0,
+          companies: new Set()
+        });
+      }
+      const entry = countsMap.get(groupKey);
+      entry.count++;
+      if (s.company_id && s.company_name) {
+        entry.companies.add(s.company_name);
+      }
     });
 
     let chipsHtml = `
-      <button type="button" class="uni-chip ${STATE.selectedUniversity === '' ? 'active' : ''}" onclick="window.EnigmaApp.selectUniPill('')">
+      <button type="button" class="uni-chip ${STATE.selectedUniversity === '' ? 'active' : ''}" data-uni-key="">
         <span>Tất Cả Các Trường</span>
         <span class="chip-count">${totalAll}</span>
       </button>
     `;
 
-    countsMap.forEach((count, uniName) => {
-      const isActive = STATE.selectedUniversity === uniName;
-      const match = STATE.students.find(s => ((s.university && s.university.trim()) ? s.university.trim() : 'Đại học / Cao đẳng liên kết') === uniName);
-      const comp = match ? (match.company_name || 'LG Display') : 'LG Display';
-
+    countsMap.forEach(item => {
+      const isActive = STATE.selectedUniversity === item.label;
+      const compLabel = item.companies.size > 0 ? [...item.companies].join(', ') : 'Chưa chọn nơi thực tập';
       chipsHtml += `
-        <button type="button" class="uni-chip ${isActive ? 'active' : ''}" onclick="window.EnigmaApp.selectUniPill('${escapeHtml(uniName)}')">
-          <span>🏛️ ${escapeHtml(uniName)}</span>
-          <small class="text-muted" style="margin-left: 2px;">(${escapeHtml(comp)})</small>
-          <span class="chip-count">${count}</span>
+        <button type="button" class="uni-chip ${isActive ? 'active' : ''}" data-uni-key="${escapeHtml(item.label)}">
+          <span>🏛️ ${escapeHtml(item.label)}</span>
+          <small class="text-muted" style="margin-left: 2px;">(${escapeHtml(compLabel)})</small>
+          <span class="chip-count">${item.count}</span>
         </button>
       `;
     });
 
     DOM.universityChipsBar.innerHTML = chipsHtml;
+
+    DOM.universityChipsBar.querySelectorAll('.uni-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const uniKey = btn.getAttribute('data-uni-key') || '';
+        window.EnigmaApp.selectUniPill(uniKey);
+      });
+    });
   }
 
   // ─── Update University & Company Dropdowns ────────────────────────────────────
   function updateUniversityDropdowns() {
     if (!DOM.studentsFilterUniversity || !DOM.studentsFilterCompany) return;
 
-    const universities = [...new Set(STATE.students.map(s => (s.university && s.university.trim()) ? s.university.trim() : 'Đại học / Cao đẳng liên kết'))].sort();
-    const companies = [...new Set(STATE.students.map(s => s.company_name || 'LG Display'))].sort();
+    const universities = [...new Set(STATE.students.map(s => getStudentUniLabel(s)))].sort();
+    const companies = [...new Set(STATE.students.map(s => (s.company_id && s.company_name) ? s.company_name : 'Chưa chọn nơi thực tập'))].sort();
 
     const currentUni = DOM.studentsFilterUniversity.value;
     const currentComp = DOM.studentsFilterCompany.value;
@@ -1089,10 +1214,13 @@
         </td>
         <td>
           <strong>${escapeHtml(s.student_id || 'Chưa có')}</strong>
-          <p class="text-muted">${escapeHtml(s.major || s.university || 'Chưa có ngành')}</p>
+          <p class="text-muted" style="margin-bottom: 2px;">${escapeHtml(s.major || 'Chưa có ngành')}</p>
+          ${s.university_pending_name ? `<span class="badge badge-warning" style="display:inline-block; margin-top:2px; font-size:11px;" title="Trường do sinh viên đề xuất đang chờ duyệt">⏳ Đề xuất: ${escapeHtml(s.university_pending_name)}</span>` : ''}
+          ${(!s.university_id && s.university && s.university.trim() && s.university.trim() !== 'Chưa phân loại' && !s.university_pending_name) ? `<small class="text-subtle" style="font-size: 11px; display: block;">Gốc: ${escapeHtml(s.university.trim())}</small>` : ''}
         </td>
         <td>
-          <strong>${escapeHtml(s.company_name || 'LG Display')}</strong>
+          <strong>${escapeHtml((s.company_id && s.company_name) ? s.company_name : 'Chưa chọn nơi thực tập')}</strong>
+          ${s.company_pending_name ? `<span class="badge badge-warning" style="display:inline-block; margin-top:2px; font-size:11px;" title="Nơi thực tập do sinh viên đề xuất đang chờ duyệt">⏳ Đề xuất: ${escapeHtml(s.company_pending_name)}</span>` : ''}
           <p class="text-muted" style="margin-bottom:2px">${escapeHtml(s.department || 'Chưa có ban')}</p>
           ${shiftPill}
         </td>
@@ -1149,8 +1277,8 @@
     const filterComp = STATE.selectedCompany || (DOM.studentsFilterCompany ? DOM.studentsFilterCompany.value : '');
 
     let filtered = STATE.students.filter(s => {
-      const uniName = (s.university && s.university.trim()) ? s.university.trim() : 'Đại học / Cao đẳng liên kết';
-      const compName = s.company_name || 'LG Display';
+      const uniName = getStudentUniLabel(s);
+      const compName = (s.company_id && s.company_name) ? s.company_name : 'Chưa chọn nơi thực tập';
 
       // University Filter
       if (filterUni && uniName.toLowerCase() !== filterUni.toLowerCase()) {
@@ -1227,19 +1355,31 @@
       if (DOM.studentsFlatWrapper) DOM.studentsFlatWrapper.style.display = 'none';
       if (DOM.studentsGroupedContainer) DOM.studentsGroupedContainer.style.display = 'flex';
 
-      // Gom nhóm sinh viên theo Trường
+      // Gom nhóm sinh viên theo university_name với nhóm tường minh "Chưa phân loại"
       const groupsMap = new Map();
       filtered.forEach(s => {
-        const uni = (s.university && s.university.trim()) ? s.university.trim() : 'Đại học / Cao đẳng liên kết';
-        if (!groupsMap.has(uni)) {
-          groupsMap.set(uni, []);
+        const uniLabel = getStudentUniLabel(s);
+        const isUnassigned = (uniLabel === 'Chưa phân loại');
+        const groupKey = isUnassigned ? 'unassigned' : uniLabel;
+        const groupLabel = isUnassigned ? 'Chưa phân loại' : uniLabel;
+        if (!groupsMap.has(groupKey)) {
+          groupsMap.set(groupKey, {
+            id: groupKey,
+            name: groupLabel,
+            isUnassigned: isUnassigned,
+            students: []
+          });
         }
-        groupsMap.get(uni).push(s);
+        groupsMap.get(groupKey).students.push(s);
       });
 
       let groupCardsHtml = '';
-      groupsMap.forEach((studentsInGroup, uniName) => {
-        const slug = encodeURIComponent(uniName).replace(/%/g, '_');
+      let groupIndex = 0;
+      groupsMap.forEach((groupData, groupKey) => {
+        const uniName = groupData.name;
+        const studentsInGroup = groupData.students;
+        const safeKey = String(groupKey).replace(/[^A-Za-z0-9_-]/g, '_');
+        const slug = `grp_${groupIndex++}_${safeKey}`;
         const isCollapsed = STATE.collapsedUniGroups.has(slug);
 
         const totalInUni = studentsInGroup.length;
@@ -1247,14 +1387,23 @@
         const highRiskInUni = studentsInGroup.filter(s => s.is_high_risk || (s.latest_stress_level !== null && s.latest_stress_level >= 4)).length;
         
         // Liệt kê công ty tiếp nhận và chuyên ngành
-        const companies = [...new Set(studentsInGroup.map(s => s.company_name || 'LG Display'))].join(', ');
+        const companies = [...new Set(studentsInGroup.map(s => (s.company_id && s.company_name) ? s.company_name : 'Chưa chọn nơi thực tập'))].join(', ');
         const majors = [...new Set(studentsInGroup.map(s => s.major).filter(Boolean))].join(', ') || 'Kỹ thuật / Công nghệ';
 
+        // Nhãn phụ hiển thị văn bản gốc của trường nếu là nhóm Chưa phân loại
+        let rawSchoolsSub = '';
+        if (groupData.isUnassigned) {
+          const rawTexts = [...new Set(studentsInGroup.map(s => s.university && s.university.trim()).filter(Boolean))].filter(t => t !== 'Chưa phân loại');
+          if (rawTexts.length > 0) {
+            rawSchoolsSub = ` &bull; <small class="text-subtle">Văn bản gốc: ${escapeHtml(rawTexts.join(', '))}</small>`;
+          }
+        }
+
         groupCardsHtml += `
-          <div class="uni-group-card ${isCollapsed ? 'collapsed' : ''}" id="uni-group-${slug}">
+          <div class="uni-group-card ${isCollapsed ? 'collapsed' : ''} ${groupData.isUnassigned ? 'uni-group-unassigned' : ''}" id="uni-group-${slug}">
             <div class="uni-group-header" onclick="window.EnigmaApp.toggleUniGroup('${slug}')">
               <div class="uni-group-title-col">
-                <div class="uni-icon-box">
+                <div class="uni-icon-box" style="${groupData.isUnassigned ? 'background: rgba(245, 158, 11, 0.15); color: #f59e0b;' : ''}">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 21h18"/>
                     <path d="M5 21V7l7-4 7 4v14"/>
@@ -1264,10 +1413,11 @@
                 <div>
                   <div class="uni-title-row">
                     <h3 class="uni-name">${escapeHtml(uniName)}</h3>
+                    ${groupData.isUnassigned ? '<span class="status-chip stress-badge-warning" style="font-size: 11px; margin-left: 6px;">Chưa phân loại</span>' : ''}
                     <span class="uni-cohort-tag">🏢 Nơi thực tập: <strong>${escapeHtml(companies)}</strong></span>
                   </div>
                   <p class="uni-subtitle">
-                    Chuyên ngành: <span class="uni-major-tag">${escapeHtml(majors)}</span>
+                    Chuyên ngành: <span class="uni-major-tag">${escapeHtml(majors)}</span>${rawSchoolsSub}
                   </p>
                 </div>
               </div>
@@ -1549,7 +1699,7 @@
         : (user.work_shift === 'day_12h' 
           ? '☀️ Ca ngày (8h-20h)' 
           : 'Chưa có ca làm'));
-    const companyDisplay = escapeHtml(user.company_name || 'Chưa có');
+    const companyDisplay = escapeHtml((user.company_id && user.company_name) ? user.company_name : 'Chưa chọn nơi thực tập');
     const deptDisplay = escapeHtml(user.department || 'Chưa có');
     document.getElementById('um-company').innerHTML = `${companyDisplay} — ${deptDisplay} &bull; <span class="text-white">${shiftText}</span>`;
 
@@ -1786,14 +1936,21 @@
   // ─── Settings Handlers ────────────────────────────────────────────────────────
   DOM.btnSaveSettings.addEventListener('click', () => {
     const newUrl = DOM.settingApiUrl.value.trim();
-    const newToken = DOM.settingAdminToken.value.trim();
     STATE.apiBaseUrl = newUrl;
-    STATE.adminToken = newToken;
     localStorage.setItem('enigma_api_url', newUrl);
-    localStorage.setItem('enigma_admin_token', newToken);
     showToast('Đã lưu cấu hình kết nối API!', 'success');
-    loadAllData();
+    if (STATE.adminToken) {
+      loadAllData();
+    }
   });
+
+  if (DOM.btnAdminLogout) {
+    DOM.btnAdminLogout.addEventListener('click', logoutAdmin);
+  }
+
+  if (DOM.btnSettingsLogout) {
+    DOM.btnSettingsLogout.addEventListener('click', logoutAdmin);
+  }
 
   DOM.btnTestConnection.addEventListener('click', async () => {
     showToast('Đang kiểm tra kết nối tới Backend...', 'info');
@@ -1872,7 +2029,7 @@
       day_12h: 'Ca ngày (8h-20h)',
       office_8h: 'Hành chính (8h-17h)'
     };
-    const workplaceText = `${user.company_name || 'LG Display'} • ${shiftMap[user.work_shift] || 'Chưa có ca làm'}`;
+    const workplaceText = `${(user.company_id && user.company_name) ? user.company_name : 'Chưa chọn nơi thực tập'} • ${shiftMap[user.work_shift] || 'Chưa có ca làm'}`;
     if (elWorkplace) elWorkplace.textContent = workplaceText;
 
     const stressText = (user.latest_stress_level !== null && user.latest_stress_level !== undefined)
@@ -2094,6 +2251,270 @@
   DOM.handbookFilterCategory.addEventListener('change', renderHandbookArticles);
   DOM.handbookFilterStatus.addEventListener('change', renderHandbookArticles);
 
+  // ─── Pending Catalog Management ───────────────────────────────────────────────
+  async function loadPendingCatalog() {
+    const [pendingRes, approvedUnis, approvedComps] = await Promise.all([
+      apiFetch('/admin/catalog/pending'),
+      apiFetch('/catalog/universities?limit=50'),
+      apiFetch('/catalog/companies?limit=50')
+    ]);
+
+    const items = Array.isArray(pendingRes) ? pendingRes : (pendingRes && pendingRes.items ? pendingRes.items : []);
+    STATE.pendingCatalog = items;
+
+    // Cache approved targets for merge dropdown
+    STATE.approvedUniversities = Array.isArray(approvedUnis) ? approvedUnis : [];
+    STATE.approvedCompanies = Array.isArray(approvedComps) ? approvedComps : [];
+
+    // Fallback if approved lists are empty: harvest from STATE.students
+    if (STATE.approvedUniversities.length === 0 && STATE.students.length > 0) {
+      const uniMap = new Map();
+      STATE.students.forEach(s => {
+        if (s.university_id && s.university_name && s.university_name !== 'Chưa phân loại') {
+          uniMap.set(s.university_id, { id: s.university_id, name: s.university_name, short_name: s.university_short_name });
+        }
+      });
+      STATE.approvedUniversities = Array.from(uniMap.values());
+    }
+
+    if (STATE.approvedCompanies.length === 0 && STATE.students.length > 0) {
+      const compMap = new Map();
+      STATE.students.forEach(s => {
+        if (s.company_id && s.company_name && s.company_name !== 'Chưa chọn nơi thực tập') {
+          compMap.set(s.company_id, { id: s.company_id, name: s.company_name });
+        }
+      });
+      STATE.approvedCompanies = Array.from(compMap.values());
+    }
+
+    // Update counters & badge
+    const totalCount = items.length;
+    const uniCount = items.filter(it => it.type === 'university').length;
+    const compCount = items.filter(it => it.type === 'company').length;
+
+    if (DOM.navBadgePending) {
+      DOM.navBadgePending.textContent = totalCount;
+      DOM.navBadgePending.style.display = totalCount > 0 ? 'inline-flex' : 'none';
+    }
+
+    const elTotal = document.getElementById('pending-count-total');
+    const elUni = document.getElementById('pending-count-uni');
+    const elComp = document.getElementById('pending-count-comp');
+    if (elTotal) elTotal.textContent = totalCount;
+    if (elUni) elUni.textContent = uniCount;
+    if (elComp) elComp.textContent = compCount;
+
+    renderPendingCatalog();
+  }
+
+  function renderPendingCatalog() {
+    const tbody = document.getElementById('pending-tbody');
+    if (!tbody) return;
+
+    const search = DOM.pendingSearchInput ? DOM.pendingSearchInput.value.toLowerCase().trim() : '';
+    const typeFilter = DOM.pendingFilterType ? DOM.pendingFilterType.value : '';
+
+    const items = (STATE.pendingCatalog || []).filter(item => {
+      if (typeFilter && item.type !== typeFilter) return false;
+      if (search) {
+        const name = (item.name || '').toLowerCase();
+        const code = (item.code || '').toLowerCase();
+        const shortName = (item.short_name || '').toLowerCase();
+        const subName = (item.submitted_by && item.submitted_by.full_name ? item.submitted_by.full_name : '').toLowerCase();
+        const subEmail = (item.submitted_by && item.submitted_by.email ? item.submitted_by.email : '').toLowerCase();
+        return name.includes(search) || code.includes(search) || shortName.includes(search) || subName.includes(search) || subEmail.includes(search);
+      }
+      return true;
+    });
+
+    if (items.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="text-center py-8">
+            <div style="padding: 2.5rem 1rem; color: var(--text-muted);">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="margin: 0 auto 0.75rem auto; opacity: 0.5;">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+              <h4 style="font-weight: 600; margin-bottom: 0.25rem;">Không có mục nào đang chờ duyệt</h4>
+              <p style="font-size: 0.825rem;">Tất cả các trường đại học và nơi thực tập do sinh viên đề xuất đã được xử lý hoàn tất.</p>
+            </div>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = items.map(item => {
+      const isUni = item.type === 'university';
+      const typeBadge = isUni
+        ? `<span class="badge badge-primary"><span style="margin-right:4px;">🏛️</span>Trường ĐH</span>`
+        : `<span class="badge badge-info"><span style="margin-right:4px;">🏢</span>Nơi thực tập</span>`;
+
+      const approvedList = isUni ? STATE.approvedUniversities : STATE.approvedCompanies;
+      const optionsHtml = approvedList
+        .filter(target => target.id !== item.id)
+        .map(target => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}${target.short_name ? ' (' + escapeHtml(target.short_name) + ')' : ''}</option>`)
+        .join('');
+
+      const submitterHtml = item.submitted_by
+        ? `<strong>${escapeHtml(item.submitted_by.full_name || 'Sinh viên')}</strong><br><small class="text-subtle">${escapeHtml(item.submitted_by.email || '')}</small>`
+        : `<span class="text-subtle">Hệ thống / Ẩn danh</span>`;
+
+      let createdDate = '—';
+      if (item.created_at) {
+        try {
+          const d = new Date(item.created_at);
+          createdDate = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch (_) {
+          createdDate = item.created_at;
+        }
+      }
+
+      const userCount = item.user_count !== undefined ? item.user_count : (item.count || 0);
+
+      return `
+        <tr>
+          <td>${typeBadge}</td>
+          <td>
+            <strong>${escapeHtml(item.name)}</strong>
+            <small class="text-subtle" style="display: block; margin-top: 2px;">Mã: ${escapeHtml(item.code || 'USER-XX')}${item.short_name ? ' · Viết tắt: ' + escapeHtml(item.short_name) : ''}</small>
+          </td>
+          <td>${submitterHtml}</td>
+          <td><span class="text-subtle" style="font-size: 0.8rem;">${escapeHtml(createdDate)}</span></td>
+          <td class="text-center">
+            <span class="badge ${userCount > 0 ? 'badge-primary' : 'badge-subtle'}">${userCount} SV</span>
+          </td>
+          <td class="text-right">
+            <div style="display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap;">
+              <button type="button" class="btn btn-sm btn-success" title="Phê duyệt đơn vị này vào danh mục chính thức" onclick="window.EnigmaApp.reviewCatalog('${escapeHtml(item.type)}', '${escapeHtml(item.id)}', 'approve')">
+                ✓ Duyệt
+              </button>
+
+              <div style="display: inline-flex; gap: 3px; align-items: center;">
+                <select id="merge-target-${escapeHtml(item.id)}" class="select-control select-sm" style="max-width: 140px;" title="Chọn đơn vị chuẩn hóa để gộp vào">
+                  <option value="">Gộp vào...</option>
+                  ${optionsHtml}
+                </select>
+                <button type="button" class="btn btn-sm btn-secondary" title="Gộp các sinh viên sang đơn vị chuẩn hóa và xóa mục này" onclick="window.EnigmaApp.reviewCatalog('${escapeHtml(item.type)}', '${escapeHtml(item.id)}', 'merge')">
+                  Gộp
+                </button>
+              </div>
+
+              <button type="button" class="btn btn-sm btn-danger-outline" title="Từ chối đề xuất và gỡ liên kết sinh viên" onclick="window.EnigmaApp.reviewCatalog('${escapeHtml(item.type)}', '${escapeHtml(item.id)}', 'reject')">
+                ✕ Từ chối
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function reviewCatalog(type, id, action) {
+    const item = (STATE.pendingCatalog || []).find(it => String(it.id) === String(id));
+    const name = item ? item.name : (type === 'university' ? 'trường đại học' : 'nơi thực tập');
+    let targetCanonicalId = null;
+
+    if (action === 'merge') {
+      const selectEl = document.getElementById(`merge-target-${id}`);
+      targetCanonicalId = selectEl ? selectEl.value : '';
+      if (!targetCanonicalId) {
+        showToast('Vui lòng chọn đơn vị chuẩn hóa trong danh sách "Gộp vào..." trước khi thực hiện.', 'warning');
+        return;
+      }
+      const targetName = selectEl.options[selectEl.selectedIndex].text;
+      const ok = window.confirm(
+        `Xác nhận GỘP ĐƠN VỊ:\n\n` +
+        `Bạn có chắc chắn muốn gộp "${name}" vào "${targetName}"?\n\n` +
+        `Tất cả sinh viên đang liên kết với "${name}" sẽ được chuyển sang "${targetName}". Mục chờ duyệt này sẽ được xóa vĩnh viễn.`
+      );
+      if (!ok) return;
+    } else if (action === 'reject') {
+      const ok = window.confirm(
+        `Xác nhận TỪ CHỐI ĐỀ XUẤT:\n\n` +
+        `Bạn có chắc chắn muốn từ chối đề xuất "${name}"?\n\n` +
+        `Mục đề xuất sẽ bị xóa và các sinh viên đang liên kết sẽ được đặt về trạng thái "Chưa phân loại".`
+      );
+      if (!ok) return;
+    } else if (action === 'approve') {
+      const ok = window.confirm(`Xác nhận PHÊ DUYỆT:\n\nPhê duyệt "${name}" thành đơn vị chính thức trong hệ thống?`);
+      if (!ok) return;
+    }
+
+    showToast(`Đang xử lý ${action === 'approve' ? 'phê duyệt' : (action === 'merge' ? 'gộp' : 'từ chối')}...`, 'info');
+
+    const res = await apiFetch('/admin/catalog/review', {
+      method: 'POST',
+      body: JSON.stringify({
+        entity_type: type,
+        entity_id: id,
+        action: action,
+        target_canonical_id: targetCanonicalId || null
+      })
+    });
+
+    if (res && res.message) {
+      showToast(res.message, 'success');
+      // Refresh pending catalog
+      await loadPendingCatalog();
+
+      // Refresh student list after action as required
+      const updatedStudents = await apiFetch('/admin/users');
+      if (updatedStudents) {
+        STATE.students = updatedStudents;
+        renderStudentsTable();
+        updateBadges();
+      }
+    }
+  }
+
+  // Listeners for pending review controls
+  if (DOM.pendingSearchInput) {
+    DOM.pendingSearchInput.addEventListener('input', renderPendingCatalog);
+  }
+  if (DOM.pendingFilterType) {
+    DOM.pendingFilterType.addEventListener('change', renderPendingCatalog);
+  }
+  if (DOM.btnRefreshPending) {
+    DOM.btnRefreshPending.addEventListener('click', () => {
+      showToast('Đang tải lại danh mục chờ duyệt...', 'info');
+      loadPendingCatalog();
+    });
+  }
+
+  const statPendingAll = document.getElementById('stat-pending-all');
+  const statPendingUni = document.getElementById('stat-pending-uni');
+  const statPendingComp = document.getElementById('stat-pending-comp');
+
+  if (statPendingAll && DOM.pendingFilterType) {
+    statPendingAll.addEventListener('click', () => {
+      DOM.pendingFilterType.value = '';
+      statPendingAll.classList.add('active');
+      if (statPendingUni) statPendingUni.classList.remove('active');
+      if (statPendingComp) statPendingComp.classList.remove('active');
+      renderPendingCatalog();
+    });
+  }
+  if (statPendingUni && DOM.pendingFilterType) {
+    statPendingUni.addEventListener('click', () => {
+      DOM.pendingFilterType.value = 'university';
+      statPendingUni.classList.add('active');
+      if (statPendingAll) statPendingAll.classList.remove('active');
+      if (statPendingComp) statPendingComp.classList.remove('active');
+      renderPendingCatalog();
+    });
+  }
+  if (statPendingComp && DOM.pendingFilterType) {
+    statPendingComp.addEventListener('click', () => {
+      DOM.pendingFilterType.value = 'company';
+      statPendingComp.classList.add('active');
+      if (statPendingAll) statPendingAll.classList.remove('active');
+      if (statPendingUni) statPendingUni.classList.remove('active');
+      renderPendingCatalog();
+    });
+  }
+
   // ─── Public Window API for inline onclick handlers ───────────────────────────
   window.EnigmaApp = {
     openUserDetail,
@@ -2171,12 +2592,90 @@
       document.getElementById('task-desc').value = task.description || '';
       document.getElementById('task-modal-title').textContent = 'Chỉnh Sửa Nhiệm Vụ Thích Nghi';
       DOM.taskModal.classList.add('open');
-    }
+    },
+    reviewCatalog
   };
+
+  // ─── Login Form Submission Handler ───────────────────────────────────────────
+  if (DOM.loginForm) {
+    DOM.loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = (DOM.loginEmail ? DOM.loginEmail.value : '').trim();
+      const password = (DOM.loginPassword ? DOM.loginPassword.value : '').trim();
+
+      if (!email || !password) {
+        if (DOM.loginError) {
+          DOM.loginError.textContent = 'Vui lòng nhập đầy đủ email và mật khẩu.';
+          DOM.loginError.style.display = 'block';
+        }
+        return;
+      }
+
+      if (DOM.btnLoginSubmit) {
+        DOM.btnLoginSubmit.disabled = true;
+        DOM.btnLoginSubmit.innerHTML = '<span>Đang xác thực...</span>';
+      }
+      if (DOM.loginError) DOM.loginError.style.display = 'none';
+
+      try {
+        const resp = await fetch(`${STATE.apiBaseUrl}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok) {
+          const msg = data.detail || 'Email hoặc mật khẩu không chính xác.';
+          if (DOM.loginError) {
+            DOM.loginError.textContent = msg;
+            DOM.loginError.style.display = 'block';
+          }
+          return;
+        }
+
+        const userRole = (data.user && data.user.role) ? (data.user.role.value || data.user.role) : '';
+        if (userRole !== 'admin') {
+          if (DOM.loginError) {
+            DOM.loginError.textContent = `Tài khoản (${data.user.email}) có phân quyền sinh viên, không có quyền quản trị viên. Vui lòng đăng nhập bằng tài khoản Admin.`;
+            DOM.loginError.style.display = 'block';
+          }
+          return;
+        }
+
+        // Lưu JWT token của tài khoản admin
+        localStorage.setItem('enigma_admin_token', data.access_token);
+        localStorage.setItem('enigma_admin_user', JSON.stringify(data.user));
+        STATE.adminToken = data.access_token;
+
+        updateAdminProfileUI();
+        hideLoginScreen();
+        showToast(`Đăng nhập thành công! Xin chào ${data.user.full_name || data.user.email}`, 'success');
+        await loadAllData();
+      } catch (err) {
+        if (DOM.loginError) {
+          DOM.loginError.textContent = `Không thể kết nối tới máy chủ (${err.message}). Vui lòng thử lại.`;
+          DOM.loginError.style.display = 'block';
+        }
+      } finally {
+        if (DOM.btnLoginSubmit) {
+          DOM.btnLoginSubmit.disabled = false;
+          DOM.btnLoginSubmit.innerHTML = '<span>Đăng Nhập Quản Trị</span>';
+        }
+      }
+    });
+  }
 
   // ─── Initialize App on Page Load ──────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
-    loadAllData();
+    if (!STATE.adminToken) {
+      showLoginScreen();
+    } else {
+      updateAdminProfileUI();
+      hideLoginScreen();
+      loadAllData();
+    }
   });
 
 })();

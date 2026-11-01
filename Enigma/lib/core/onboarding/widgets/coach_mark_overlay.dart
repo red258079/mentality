@@ -23,6 +23,8 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
   int _currentStepIndex = 0;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+  bool _isReady = false;
+  bool _isScrolling = false;
 
   @override
   void initState() {
@@ -35,6 +37,25 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
     _pulseAnimation = Tween<double>(begin: 0.96, end: 1.08).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    // Cuộn mục tiêu vào khung nhìn trước khi hiển thị bước đầu tiên
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (widget.steps.isNotEmpty) {
+        try {
+          await _scrollTargetIntoView(widget.steps[0].targetKey);
+        } catch (_) {}
+      }
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _isReady = true;
+            });
+          }
+        });
+      }
+    });
   }
 
   @override
@@ -43,21 +64,59 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
     super.dispose();
   }
 
+  Future<void> _scrollTargetIntoView(GlobalKey key) async {
+    final targetContext = key.currentContext;
+    if (targetContext != null && targetContext.mounted) {
+      final scrollable = Scrollable.maybeOf(targetContext);
+      if (scrollable != null) {
+        try {
+          await Scrollable.ensureVisible(
+            targetContext,
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          ).timeout(const Duration(milliseconds: 600));
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> _goToStep(int index) async {
+    if (_isScrolling || !mounted) return;
+    setState(() {
+      _isScrolling = true;
+    });
+
+    try {
+      final targetKey = widget.steps[index].targetKey;
+      await _scrollTargetIntoView(targetKey);
+    } finally {
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _currentStepIndex = index;
+              _isScrolling = false;
+            });
+          }
+        });
+      }
+    }
+  }
+
   void _next() {
+    if (_isScrolling) return;
     if (_currentStepIndex < widget.steps.length - 1) {
-      setState(() {
-        _currentStepIndex++;
-      });
+      _goToStep(_currentStepIndex + 1);
     } else {
       widget.onFinish();
     }
   }
 
   void _prev() {
+    if (_isScrolling) return;
     if (_currentStepIndex > 0) {
-      setState(() {
-        _currentStepIndex--;
-      });
+      _goToStep(_currentStepIndex - 1);
     }
   }
 
@@ -74,6 +133,11 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
+    if (!_isReady) {
+      return const SizedBox.shrink();
+    }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final step = widget.steps[_currentStepIndex];
     final targetRect = _getTargetRect(step.targetKey);
     final screenSize = MediaQuery.of(context).size;
@@ -118,6 +182,42 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
             totalSteps: totalSteps,
             isLast: isLast,
           ),
+
+          // 4. Fixed "Bỏ qua" button at top-right inside SafeArea (never blocked by _isScrolling)
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8, right: 12),
+                child: Material(
+                  color: isDark ? const Color(0xCC1E232E) : Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: widget.onSkip,
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Bỏ qua',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(width: 4),
+                          Icon(Icons.close_rounded, size: 14, color: Colors.white70),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -132,33 +232,42 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay> with SingleTickerPr
     required int totalSteps,
     required bool isLast,
   }) {
+    final mediaQuery = MediaQuery.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardWidth = math.min(screenSize.width - 36, 360.0);
+    final cardWidth = math.min(screenSize.width - 32, 360.0);
 
-    // Tính toán toạ độ vị trí đặt Tooltip (ở trên hay ở dưới target)
-    double top = screenSize.height / 2 - 100;
-    bool placeAbove = false;
+    const double estimatedCardHeight = 240.0;
+    const double margin = 16.0;
+    final double safeTop = mediaQuery.padding.top + margin;
+    final double safeBottom = screenSize.height - (mediaQuery.padding.bottom + mediaQuery.viewInsets.bottom + margin);
 
+    double top;
     if (targetRect != null) {
-      final targetCenterY = targetRect.center.dy;
+      final double spaceBelow = safeBottom - targetRect.bottom;
+      final double spaceAbove = targetRect.top - safeTop;
+
+      bool placeAbove;
       if (step.preferredPosition == TooltipPosition.top) {
         placeAbove = true;
       } else if (step.preferredPosition == TooltipPosition.bottom) {
         placeAbove = false;
       } else {
-        placeAbove = targetCenterY > (screenSize.height * 0.48);
+        // If not enough room below target, place card above
+        placeAbove = spaceBelow < (estimatedCardHeight + 12) || spaceAbove > spaceBelow;
       }
 
       if (placeAbove) {
-        top = targetRect.top - 200;
-        if (top < 50) top = 50;
+        top = targetRect.top - estimatedCardHeight - 14;
       } else {
-        top = targetRect.bottom + 18;
-        if (top + 190 > screenSize.height - 30) {
-          top = screenSize.height - 220;
-        }
+        top = targetRect.bottom + 14;
       }
+    } else {
+      top = (safeTop + safeBottom - estimatedCardHeight) / 2;
     }
+
+    // Always clamp the card fully inside the visible area
+    final double maxTop = math.max(safeTop, safeBottom - estimatedCardHeight);
+    top = top.clamp(safeTop, maxTop);
 
     final double left = (screenSize.width - cardWidth) / 2;
 

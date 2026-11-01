@@ -7,6 +7,13 @@ class User {
   final String? university;
   final String? major;
   final String? avatarUrl;
+  final String? universityId;
+  final String? universityName;
+  final bool? universityIsPending;
+  final String? companyId;
+  final String? companyName;
+  final bool? companyIsPending;
+  final bool? isPending;
 
   User({
     required this.id,
@@ -17,6 +24,13 @@ class User {
     this.university,
     this.major,
     this.avatarUrl,
+    this.universityId,
+    this.universityName,
+    this.universityIsPending,
+    this.companyId,
+    this.companyName,
+    this.companyIsPending,
+    this.isPending,
   });
 
   bool get isGuest => id == 'guest';
@@ -31,6 +45,13 @@ class User {
       university: json['university'],
       major: json['major'],
       avatarUrl: json['avatar_url'] ?? json['avatarUrl'],
+      universityId: json['university_id']?.toString(),
+      universityName: json['university_name'],
+      universityIsPending: json['university_is_pending'] as bool?,
+      companyId: json['company_id']?.toString(),
+      companyName: json['company_name'],
+      companyIsPending: json['company_is_pending'] as bool?,
+      isPending: json['is_pending'] as bool?,
     );
   }
 
@@ -44,6 +65,13 @@ class User {
       'university': university,
       'major': major,
       'avatarUrl': avatarUrl,
+      'university_id': universityId,
+      'university_name': universityName,
+      'university_is_pending': universityIsPending,
+      'company_id': companyId,
+      'company_name': companyName,
+      'company_is_pending': companyIsPending,
+      'is_pending': isPending,
     };
   }
 
@@ -56,6 +84,13 @@ class User {
     String? university,
     String? major,
     String? avatarUrl,
+    String? universityId,
+    String? universityName,
+    bool? universityIsPending,
+    String? companyId,
+    String? companyName,
+    bool? companyIsPending,
+    bool? isPending,
   }) {
     return User(
       id: id ?? this.id,
@@ -66,6 +101,13 @@ class User {
       university: university ?? this.university,
       major: major ?? this.major,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      universityId: universityId ?? this.universityId,
+      universityName: universityName ?? this.universityName,
+      universityIsPending: universityIsPending ?? this.universityIsPending,
+      companyId: companyId ?? this.companyId,
+      companyName: companyName ?? this.companyName,
+      companyIsPending: companyIsPending ?? this.companyIsPending,
+      isPending: isPending ?? this.isPending,
     );
   }
 }

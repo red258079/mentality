@@ -9,9 +9,12 @@ from app.db.models.checkin import DailyCheckin, UserStreak
 from app.db.models.task import Task, UserTaskProgress, PillarType
 from app.db.models.notification_log import NotificationLog, NotificationType
 from app.db.models.feature_onboarding import UserFeatureOnboarding
+from app.db.models.catalog import University, Company
 
 __all__ = [
     "Base",
+    "University",
+    "Company",
     "User",
     "UserRole",
     "InternProfile",

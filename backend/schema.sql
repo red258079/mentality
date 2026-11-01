@@ -17,6 +17,7 @@ CREATE TABLE users (
     role            user_role NOT NULL DEFAULT 'student',
     full_name       VARCHAR(255) NOT NULL,
     student_id      VARCHAR(20) UNIQUE,
+    university_id   UUID,
     university      VARCHAR(255),
     major           VARCHAR(255),
     avatar_url      TEXT,
@@ -28,14 +29,49 @@ CREATE TABLE users (
     otp_code        VARCHAR(6),
     otp_expires_at  TIMESTAMPTZ
 );
-CREATE INDEX idx_users_email      ON users (email);
-CREATE INDEX idx_users_role       ON users (role);
-CREATE INDEX idx_users_student_id ON users (student_id);
+CREATE INDEX idx_users_email         ON users (email);
+CREATE INDEX idx_users_role          ON users (role);
+CREATE INDEX idx_users_student_id    ON users (student_id);
 
--- 2. INTERN PROFILES
+-- 2. CATALOG TABLES (UNIVERSITIES & COMPANIES)
+CREATE TABLE IF NOT EXISTS universities (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                 VARCHAR(50) UNIQUE NOT NULL,
+    name                 VARCHAR(255) NOT NULL,
+    short_name           VARCHAR(100),
+    city                 VARCHAR(100),
+    is_approved          BOOLEAN NOT NULL DEFAULT TRUE,
+    submitted_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_universities_code ON universities (code);
+CREATE INDEX IF NOT EXISTS idx_universities_approved ON universities (is_approved);
+
+ALTER TABLE users ADD CONSTRAINT fk_users_university_id
+    FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE SET NULL;
+CREATE INDEX idx_users_university_id ON users (university_id);
+
+CREATE TABLE IF NOT EXISTS companies (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                 VARCHAR(50) UNIQUE NOT NULL,
+    name                 VARCHAR(255) NOT NULL,
+    short_name           VARCHAR(100),
+    latitude             DOUBLE PRECISION,
+    longitude            DOUBLE PRECISION,
+    radius_meters        INTEGER NOT NULL DEFAULT 500,
+    workplace_type       VARCHAR(50) NOT NULL DEFAULT 'factory_locker',
+    is_approved          BOOLEAN NOT NULL DEFAULT TRUE,
+    submitted_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_companies_code ON companies (code);
+CREATE INDEX IF NOT EXISTS idx_companies_approved ON companies (is_approved);
+
+-- 3. INTERN PROFILES
 CREATE TABLE intern_profiles (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id                UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    company_id             UUID REFERENCES companies(id) ON DELETE SET NULL,
     company_name           VARCHAR(255) DEFAULT 'LG Display',
     department             VARCHAR(255),
     intern_start_date      DATE,
@@ -49,6 +85,7 @@ CREATE TABLE intern_profiles (
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX idx_intern_profiles_company_id ON intern_profiles (company_id);
 
 -- 3. DAILY CHECKINS + GACHA
 CREATE TABLE daily_checkins (
@@ -230,8 +267,8 @@ CREATE TABLE refresh_tokens (
 );
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
 
--- 12. USER FEATURE ONBOARDINGS (Contextual Coach Marks status)
-CREATE TABLE user_feature_onboardings (
+-- 16. USER FEATURE ONBOARDINGS (Contextual Coach Marks status)
+CREATE TABLE IF NOT EXISTS user_feature_onboardings (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     feature_key  VARCHAR(50) NOT NULL,
@@ -239,7 +276,7 @@ CREATE TABLE user_feature_onboardings (
     completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_user_feature_onboarding UNIQUE (user_id, feature_key)
 );
-CREATE INDEX idx_user_feature_onboarding_user ON user_feature_onboardings (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_feature_onboarding_user ON user_feature_onboardings (user_id);
 
 -- AUTO-UPDATE updated_at TRIGGER
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -296,3 +333,60 @@ INSERT INTO tasks (phase, pillar, title, description, duration_minutes, unlock_d
 ('sustain',     'mental',   'Kiểm soát và phòng ngừa kiệt sức',                 'Thực hành bài kiểm tra mức độ căng thẳng để xem bạn có đang quá sức không.', 5, 75, 25),
 ('sustain',     'career',   'Cập nhật hồ sơ xin việc (CV) với kinh nghiệm thực tập','Ghi lại những thành tích, số liệu và kỹ năng bạn đã tích lũy được trong 3 tháng qua.', 30, 85, 26),
 ('sustain',     'social',   'Nói lời cảm ơn và giữ liên lạc',                   'Cảm ơn những người đã hướng dẫn bạn và xin thông tin liên lạc để duy trì kết nối đồng nghiệp.', 15, 90, 27);
+
+-- 4. RLS POLICIES FOR CATALOG TABLES
+ALTER TABLE universities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE tablename = 'universities' AND policyname = 'universities_read_approved_policy'
+    ) THEN
+        CREATE POLICY universities_read_approved_policy ON universities
+            FOR SELECT USING (is_approved = true);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE tablename = 'companies' AND policyname = 'companies_read_approved_policy'
+    ) THEN
+        CREATE POLICY companies_read_approved_policy ON companies
+            FOR SELECT USING (is_approved = true);
+    END IF;
+END $$;
+
+-- 5. SEED CATALOG (COMPANIES & UNIVERSITIES)
+INSERT INTO companies (code, name, short_name, latitude, longitude, radius_meters, workplace_type, is_approved)
+VALUES
+('lg_display_hp',   'LG Display Hải Phòng',                  'LG Display',   20.8865, 106.5821, 600,  'factory_locker', true),
+('samsung_sevt_tn', 'Samsung Electronics Thái Nguyên (SEVT)', 'Samsung SEVT', 21.4650, 105.8690, 800,  'factory_locker', true),
+('samsung_sdv_bn',  'Samsung Display Bắc Ninh (SDV)',        'Samsung SDV',  21.2035, 105.9754, 800,  'factory_locker', true),
+('fpt_software_hl', 'FPT Software Hòa Lạc (F-Ville)',         'FPT Software', 21.0131, 105.5273, 500,  'office',         true),
+('vinfast_hp',      'Tổ hợp Nhà máy VinFast Hải Phòng',      'VinFast',      20.8350, 106.9320, 1000, 'factory_locker', true)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO universities (code, name, short_name, city, is_approved)
+VALUES
+('BDU',       'Trường Đại học Bình Dương',                 'ĐH Bình Dương',           'Bình Dương',      true),
+('HUST',      'Đại học Bách Khoa Hà Nội',                  'ĐH Bách Khoa Hà Nội',     'Hà Nội',          true),
+('HAUI',      'Trường Đại học Công nghiệp Hà Nội',         'ĐH Công nghiệp Hà Nội',   'Hà Nội',          true),
+('PTIT',      'Học viện Công nghệ Bưu chính Viễn thông',   'Học viện CNBCVT',         'Hà Nội',          true),
+('UTC',       'Trường Đại học Giao thông Vận tải',         'ĐH Giao thông Vận tải',   'Hà Nội',          true),
+('NEU',       'Trường Đại học Kinh tế Quốc dân',           'ĐH Kinh tế Quốc dân',     'Hà Nội',          true),
+('PHENIKAA',  'Trường Đại học Phenikaa',                   'ĐH Phenikaa',             'Hà Nội',          true),
+('VNU_UET',   'Trường Đại học Công nghệ - ĐHQGHN',         'ĐH Công nghệ (UET)',      'Hà Nội',          true),
+('HOU',       'Trường Đại học Mở Hà Nội',                  'ĐH Mở Hà Nội',            'Hà Nội',          true),
+('IUH',       'Trường Đại học Công nghiệp TP.HCM',         'ĐH Công nghiệp TP.HCM',   'TP. Hồ Chí Minh', true)
+ON CONFLICT (code) DO NOTHING;
+
+-- 6. BACKFILL EXISTING MATCHES (Leaves 'Dai hoc Cong Nghiep', 'Test Uni' and NULL unassigned)
+UPDATE users
+SET university_id = (SELECT id FROM universities WHERE code = 'BDU')
+WHERE university_id IS NULL
+  AND university IN ('Trường Đại Học Bình Dương', 'Đại Học Bình Dương', 'Đại học Bình Dương');
+
+UPDATE users
+SET university_id = (SELECT id FROM universities WHERE code = 'HUST')
+WHERE university_id IS NULL
+  AND university IN ('Dai hoc Bach Khoa Ha Noi', 'Đại học Bách Khoa Hà Nội', 'ĐH Bách Khoa Hà Nội');
+

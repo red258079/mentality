@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../utils/storage.dart';
 import '../constants/app_constants.dart';
+import '../../models/catalog_item.dart';
 
 /// Dio HTTP Client với JWT Auto-refresh Interceptor.
 ///
@@ -84,4 +85,59 @@ class ApiClient {
   }
 
   static Dio get instance => _dio;
+
+  /// Tìm kiếm trường đại học trong Catalog (GET /catalog/universities?q=&limit=20)
+  static Future<List<CatalogItem>> searchUniversities(String q, {int limit = 20}) async {
+    final response = await _dio.get(
+      '/catalog/universities',
+      queryParameters: {'q': q, 'limit': limit},
+    );
+    if (response.data is List) {
+      return (response.data as List)
+          .map((item) => CatalogItem.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList();
+    }
+    return [];
+  }
+
+  /// Tìm kiếm công ty thực tập trong Catalog (GET /catalog/companies?q=&limit=20)
+  static Future<List<CatalogItem>> searchCompanies(String q, {int limit = 20}) async {
+    final response = await _dio.get(
+      '/catalog/companies',
+      queryParameters: {'q': q, 'limit': limit},
+    );
+    if (response.data is List) {
+      return (response.data as List)
+          .map((item) => CatalogItem.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList();
+    }
+    return [];
+  }
+
+  /// Cập nhật trường học và công ty thực tập theo Catalog (PUT /me/profile)
+  static Future<Map<String, dynamic>> updateCatalogProfile({
+    String? universityId,
+    String? companyId,
+    String? otherUniversityName,
+    String? otherCompanyName,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (universityId != null && universityId.isNotEmpty) {
+      payload['university_id'] = universityId;
+    }
+    if (companyId != null && companyId.isNotEmpty) {
+      payload['company_id'] = companyId;
+    }
+    if (otherUniversityName != null && otherUniversityName.isNotEmpty) {
+      payload['other_university_name'] = otherUniversityName;
+    }
+    if (otherCompanyName != null && otherCompanyName.isNotEmpty) {
+      payload['other_company_name'] = otherCompanyName;
+    }
+
+    final response = await _dio.put('/me/profile', data: payload);
+    return response.data is Map<String, dynamic>
+        ? response.data as Map<String, dynamic>
+        : Map<String, dynamic>.from(response.data as Map);
+  }
 }

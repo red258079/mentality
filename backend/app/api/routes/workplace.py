@@ -23,8 +23,14 @@ async def get_authed_user(authorization: Optional[str] = Header(None), db: Async
     return user
 
 
+from uuid import UUID
+from app.db.models.catalog import Company
+from app.core.text_utils import normalize_vietnamese_text
+
+
 class UpdateWorkplaceRequest(BaseModel):
-    company_name: str
+    company_id: Optional[UUID] = None
+    company_name: Optional[str] = None
     company_lat: Optional[float] = None
     company_lng: Optional[float] = None
     company_radius: Optional[int] = 500
@@ -67,6 +73,7 @@ async def get_workplace_profile(
     return {
         "user_id": str(user.id),
         "full_name": user.full_name,
+        "company_id": str(profile.company_id) if profile.company_id else None,
         "company_name": profile.company_name or "LG Display Hải Phòng",
         "department": profile.department or "Khối Sản xuất Module",
         "company_lat": profile.company_lat,
@@ -89,27 +96,73 @@ async def update_workplace_profile(
     result = await db.execute(select(InternProfile).where(InternProfile.user_id == user.id))
     profile = result.scalar_one_or_none()
 
-    # Tự động điền tọa độ nếu người dùng chọn công ty trong danh mục mẫu
     comp_lat = payload.company_lat
     comp_lng = payload.company_lng
     comp_radius = payload.company_radius
     wp_type = payload.workplace_type
 
-    matched_comp = find_company_by_name(payload.company_name)
-    if matched_comp and matched_comp["latitude"] is not None:
+    resolved_company_id = None
+    resolved_company_name = None
+
+    if payload.company_id is not None:
+        c_res = await db.execute(select(Company).where(Company.id == payload.company_id))
+        db_comp = c_res.scalar_one_or_none()
+        if not db_comp:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy công ty/nơi thực tập trong danh mục."
+            )
+        resolved_company_id = db_comp.id
+        resolved_company_name = db_comp.name
         if comp_lat is None:
-            comp_lat = matched_comp["latitude"]
+            comp_lat = db_comp.latitude
         if comp_lng is None:
-            comp_lng = matched_comp["longitude"]
+            comp_lng = db_comp.longitude
         if comp_radius is None:
-            comp_radius = matched_comp["radius_meters"]
+            comp_radius = db_comp.radius_meters
         if wp_type is None or wp_type == "factory_locker":
-            wp_type = matched_comp["workplace_type"]
+            wp_type = db_comp.workplace_type
+    elif payload.company_name is not None:
+        cname = payload.company_name.strip()
+        if cname:
+            norm_cname = normalize_vietnamese_text(cname)
+            all_comps_res = await db.execute(select(Company).where(Company.is_approved == True))
+            matched = None
+            for c in all_comps_res.scalars().all():
+                if normalize_vietnamese_text(c.name) == norm_cname or (
+                    c.short_name and normalize_vietnamese_text(c.short_name) == norm_cname
+                ):
+                    matched = c
+                    break
+            if matched:
+                resolved_company_id = matched.id
+                resolved_company_name = matched.name
+                if comp_lat is None:
+                    comp_lat = matched.latitude
+                if comp_lng is None:
+                    comp_lng = matched.longitude
+                if comp_radius is None:
+                    comp_radius = matched.radius_meters
+                if wp_type is None or wp_type == "factory_locker":
+                    wp_type = matched.workplace_type
+            else:
+                resolved_company_name = cname
+                matched_sample = find_company_by_name(cname)
+                if matched_sample and matched_sample["latitude"] is not None:
+                    if comp_lat is None:
+                        comp_lat = matched_sample["latitude"]
+                    if comp_lng is None:
+                        comp_lng = matched_sample["longitude"]
+                    if comp_radius is None:
+                        comp_radius = matched_sample["radius_meters"]
+                    if wp_type is None or wp_type == "factory_locker":
+                        wp_type = matched_sample["workplace_type"]
 
     if not profile:
         profile = InternProfile(
             user_id=user.id,
-            company_name=payload.company_name.strip(),
+            company_id=resolved_company_id,
+            company_name=resolved_company_name or "LG Display Hải Phòng",
             department=payload.department.strip() if payload.department else None,
             company_lat=comp_lat,
             company_lng=comp_lng,
@@ -121,7 +174,10 @@ async def update_workplace_profile(
         )
         db.add(profile)
     else:
-        profile.company_name = payload.company_name.strip()
+        if resolved_company_id is not None or payload.company_id is not None:
+            profile.company_id = resolved_company_id
+        if resolved_company_name is not None:
+            profile.company_name = resolved_company_name
         if payload.department is not None:
             profile.department = payload.department.strip()
         profile.company_lat = comp_lat
@@ -139,6 +195,7 @@ async def update_workplace_profile(
 
     return {
         "message": "Cập nhật hồ sơ thực tập và vị trí công ty thành công!",
+        "company_id": str(profile.company_id) if profile.company_id else None,
         "company_name": profile.company_name,
         "work_shift": profile.work_shift,
         "workplace_type": profile.workplace_type,

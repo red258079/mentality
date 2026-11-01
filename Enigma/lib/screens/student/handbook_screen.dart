@@ -12,10 +12,10 @@ class HandbookScreen extends StatefulWidget {
   const HandbookScreen({super.key});
 
   @override
-  State<HandbookScreen> createState() => _HandbookScreenState();
+  State<HandbookScreen> createState() => HandbookScreenState();
 }
 
-class _HandbookScreenState extends State<HandbookScreen> {
+class HandbookScreenState extends State<HandbookScreen> {
   final List<HandbookArticle> _articles = HandbookArticle.mockArticles;
   String _selectedCategory = 'Tất cả';
   final List<String> _categories = ['Tất cả', 'Tâm lý', 'Ăn uống', 'Sức khỏe', 'Quyền lợi', 'Nhà trọ', 'An toàn'];
@@ -30,6 +30,8 @@ class _HandbookScreenState extends State<HandbookScreen> {
   void initState() {
     super.initState();
   }
+
+  void startTour({bool force = false}) => _startTour(force: force);
 
   void _startTour({bool force = false}) {
     FeatureTour.start(

@@ -14,6 +14,7 @@ import 'career_reflection_screen.dart';
 import 'student/journal_screen.dart';
 import 'student/life_log_screen.dart';
 import 'student/profile_screen.dart';
+import 'student/complete_profile_screen.dart';
 import '../state/auth_state.dart';
 import '../state/notification_state.dart';
 
@@ -23,19 +24,21 @@ import 'settings_screen.dart';
 import 'student/notifications_screen.dart';
 import '../core/onboarding/models/feature_keys.dart';
 import '../core/onboarding/models/onboarding_step.dart';
+import '../core/onboarding/widgets/help_guide_button.dart';
 import '../core/onboarding/feature_tour_controller.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   final GlobalKey _dashboardKey = GlobalKey();
   final GlobalKey _checkinKey = GlobalKey();
   final GlobalKey _quickActionsKey = GlobalKey();
+  bool _dismissedProfileBannerForSession = false;
 
   @override
   void initState() {
@@ -46,6 +49,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
   }
+
+  void startTour({bool force = false}) => _startTour(force: force);
 
   void _startTour({bool force = false}) {
     FeatureTour.start(
@@ -192,8 +197,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final appState = context.watch<AppState>();
     final authState = context.watch<AuthState>();
     final todayTasks = appState.todayTasks;
-    final userName = authState.user?.name ?? 'Bạn';
-    final avatarUrl = authState.user?.avatarUrl;
+    final user = authState.user;
+    final userName = user?.name ?? 'Bạn';
+    final avatarUrl = user?.avatarUrl;
+
+    final bool showCompleteProfileBanner = user != null &&
+        !user.isGuest &&
+        (user.universityId == null || user.universityId!.isEmpty) &&
+        !_dismissedProfileBannerForSession;
 
     return Scaffold(
       body: SafeArea(
@@ -359,7 +370,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           );
                         },
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
+                      // Help Guide Button
+                      HelpGuideButton(
+                        onTap: () => startTour(force: true),
+                        tooltip: 'Xem hướng dẫn Trang chủ',
+                      ),
+                      const SizedBox(width: 2),
                       // 3-dot menu
                       PopupMenuButton<String>(
                         icon: Icon(
@@ -479,6 +496,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
                     const SizedBox(height: 4),
+
+                    // Gentle Complete Profile Banner (if university_id is null)
+                    if (showCompleteProfileBanner) ...[
+                      _buildCompleteProfileBanner(context),
+                      const SizedBox(height: 12),
+                    ],
 
                     // 1. Live Dashboard Summary Card (Real API data)
                     GestureDetector(
@@ -720,6 +743,102 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompleteProfileBanner(BuildContext context) {
+    final surfaceColor = AppTheme.surfaceColor(context);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.secondary.withValues(alpha: 0.35),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const CompleteProfileScreen(isFromAuth: false),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondary.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.school_outlined,
+                    color: AppTheme.secondary,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Bổ sung trường và nơi thực tập',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.onSurface(context),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Để quản trị viên hỗ trợ bạn phù hợp hơn',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: AppTheme.onSurfaceSecondary(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: AppTheme.onSurfaceMuted(context),
+                  ),
+                  tooltip: 'Tạm ẩn thông báo',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () {
+                    setState(() {
+                      _dismissedProfileBannerForSession = true;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

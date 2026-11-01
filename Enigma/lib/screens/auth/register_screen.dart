@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../../state/auth_state.dart';
 import '../../navigation/student_nav.dart';
 import '../../theme/app_theme.dart';
+import '../../core/utils/storage.dart';
+import '../student/complete_profile_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -81,7 +83,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (!mounted) return;
 
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const StudentNav()),
+          MaterialPageRoute(builder: (_) => const CompleteProfileScreen(isFromAuth: true)),
           (route) => false,
         );
       } else {
@@ -126,8 +128,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!mounted) return;
 
     if (success) {
+      final user = authState.user;
+      final shouldShowCompleteProfile = (user?.universityId == null || user!.universityId!.isEmpty) &&
+          !StorageUtil.hasSkippedCompleteProfile;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const StudentNav()),
+        MaterialPageRoute(
+          builder: (_) => shouldShowCompleteProfile
+              ? const CompleteProfileScreen(isFromAuth: true)
+              : const StudentNav(),
+        ),
         (route) => false,
       );
     } else if (authState.error != null) {

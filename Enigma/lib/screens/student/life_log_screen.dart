@@ -9,6 +9,10 @@ import '../../core/services/sleep_sensor_service.dart';
 import '../../core/services/workplace_service.dart';
 import '../../core/services/reminder_service.dart';
 import '../../core/utils/storage.dart';
+import '../../core/onboarding/models/feature_keys.dart';
+import '../../core/onboarding/models/onboarding_step.dart';
+import '../../core/onboarding/feature_tour_controller.dart';
+import '../../core/onboarding/widgets/help_guide_button.dart';
 
 /// Pure function checking whether a given ISO date/timestamp string [iso]
 /// corresponds to the same calendar day as [now] in the local time zone.
@@ -65,6 +69,14 @@ class _LifeLogScreenState extends State<LifeLogScreen>
   bool _isLoading = false;
   bool _hasCompletedToday = false;
   Map<String, dynamic>? _todayLifeLogData;
+
+  // Feature onboarding tour keys
+  final GlobalKey _sleepSuggestionKey = GlobalKey();
+  final GlobalKey _sleepSliderKey = GlobalKey();
+  final GlobalKey _shiftChipsKey = GlobalKey();
+  final GlobalKey _saveButtonKey = GlobalKey();
+  final GlobalKey _reminderCardKey = GlobalKey();
+  bool _hasAutoRunTour = false;
 
   // Tab controller for history vs new entry
   late TabController _tabController;
@@ -144,10 +156,88 @@ class _LifeLogScreenState extends State<LifeLogScreen>
         setState(() {
           _hasCompletedToday = false;
         });
+        _scheduleAutoTour();
       }
     } catch (e) {
       debugPrint('[LifeLogScreen] Lỗi kiểm tra nhật ký hôm nay: $e');
+      if (mounted) {
+        _scheduleAutoTour();
+      }
     }
+  }
+
+  void _scheduleAutoTour() {
+    if (_hasAutoRunTour) return;
+    _hasAutoRunTour = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_hasCompletedToday && _tabController.index == 0) {
+        _startTour(force: false);
+      }
+    });
+  }
+
+  void _startTour({bool force = false}) {
+    if (_hasCompletedToday) {
+      if (force && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Bạn đã hoàn thành nhật ký hôm nay. Hướng dẫn chỉ áp dụng cho biểu mẫu ghi nhật ký.',
+            ),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_tabController.index != 0) {
+      _tabController.animateTo(0);
+    }
+
+    final allSteps = [
+      OnboardingStep(
+        targetKey: _sleepSuggestionKey,
+        title: 'Gợi Ý Giấc Ngủ',
+        description: 'Tự động nhận diện khung giờ ngủ từ cảm biến máy hoặc theo ca làm.',
+        icon: Icons.auto_awesome_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _sleepSliderKey,
+        title: 'Thời Gian Ngủ',
+        description: 'Kéo thanh trượt để chỉnh số giờ bạn đã ngủ sau ca.',
+        icon: Icons.linear_scale_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _shiftChipsKey,
+        title: 'Ca Làm Việc',
+        description: 'Chọn ca ngày hoặc ca đêm để tối ưu hóa nhịp sinh học.',
+        icon: Icons.work_outline_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _saveButtonKey,
+        title: 'Lưu Nhật Ký',
+        description: 'Lưu lại mỗi ngày để theo dõi phục hồi và ngăn ngừa kiệt sức.',
+        icon: Icons.save_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _reminderCardKey,
+        title: 'Nhắc Nhở Hằng Ngày',
+        description: 'Bật thông báo nhắc nhở để không quên ghi nhật ký đúng giờ.',
+        icon: Icons.alarm_on_rounded,
+      ),
+    ];
+
+    final steps = allSteps.where((s) => s.targetKey.currentContext != null).toList();
+    if (steps.isEmpty) return;
+
+    FeatureTour.start(
+      context,
+      featureKey: FeatureKeys.lifeLog,
+      force: force,
+      steps: steps,
+    );
   }
 
   bool get _isLogQueuedOffline {
@@ -249,6 +339,12 @@ class _LifeLogScreenState extends State<LifeLogScreen>
         title: const Text('Nhật Ký Sinh Hoạt'),
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
+        actions: [
+          HelpGuideButton(
+            onTap: () => _startTour(force: true),
+            tooltip: 'Xem hướng dẫn Nhật ký',
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: AppTheme.primary,
@@ -274,16 +370,22 @@ class _LifeLogScreenState extends State<LifeLogScreen>
 
   Widget _buildEntryForm() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSleepSuggestionCard(),
+          KeyedSubtree(
+            key: _sleepSuggestionKey,
+            child: _buildSleepSuggestionCard(),
+          ),
           const SizedBox(height: 20),
 
           _buildSectionHeader('💤 Số giờ ngủ ca vừa rồi', formatHoursMinutes(_sleepHours)),
           const SizedBox(height: 12),
-          _buildSleepSlider(),
+          KeyedSubtree(
+            key: _sleepSliderKey,
+            child: _buildSleepSlider(),
+          ),
 
           const SizedBox(height: 24),
 
@@ -302,7 +404,10 @@ class _LifeLogScreenState extends State<LifeLogScreen>
                     : 'Chưa chọn',
           ),
           const SizedBox(height: 12),
-          _buildShiftSelector(),
+          KeyedSubtree(
+            key: _shiftChipsKey,
+            child: _buildShiftSelector(),
+          ),
 
           const SizedBox(height: 24),
 
@@ -323,10 +428,16 @@ class _LifeLogScreenState extends State<LifeLogScreen>
           _buildNoteField(),
 
           const SizedBox(height: 24),
-          _buildReminderCard(),
+          KeyedSubtree(
+            key: _reminderCardKey,
+            child: _buildReminderCard(),
+          ),
 
           const SizedBox(height: 24),
-          _buildSaveButton(),
+          KeyedSubtree(
+            key: _saveButtonKey,
+            child: _buildSaveButton(),
+          ),
           const SizedBox(height: 20),
         ],
       ),

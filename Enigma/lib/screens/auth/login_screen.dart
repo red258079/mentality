@@ -7,6 +7,7 @@ import '../../navigation/student_nav.dart';
 import '../../theme/app_theme.dart';
 import '../../core/services/biometric_service.dart';
 import '../../core/utils/storage.dart';
+import '../student/complete_profile_screen.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 
@@ -98,8 +99,15 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (!mounted) return;
+      final user = authState.user;
+      final shouldShowCompleteProfile = (user?.universityId == null || user!.universityId!.isEmpty) &&
+          !StorageUtil.hasSkippedCompleteProfile;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const StudentNav()),
+        MaterialPageRoute(
+          builder: (_) => shouldShowCompleteProfile
+              ? const CompleteProfileScreen(isFromAuth: true)
+              : const StudentNav(),
+        ),
       );
     } else if (authState.error != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -132,8 +140,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
       if (success) {
+        final user = authState.user;
+        final shouldShowCompleteProfile = (user?.universityId == null || user!.universityId!.isEmpty) &&
+            !StorageUtil.hasSkippedCompleteProfile;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const StudentNav()),
+          MaterialPageRoute(
+            builder: (_) => shouldShowCompleteProfile
+                ? const CompleteProfileScreen(isFromAuth: true)
+                : const StudentNav(),
+          ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -167,8 +182,15 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
 
     if (success) {
+      final user = authState.user;
+      final shouldShowCompleteProfile = (user?.universityId == null || user!.universityId!.isEmpty) &&
+          !StorageUtil.hasSkippedCompleteProfile;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const StudentNav()),
+        MaterialPageRoute(
+          builder: (_) => shouldShowCompleteProfile
+              ? const CompleteProfileScreen(isFromAuth: true)
+              : const StudentNav(),
+        ),
       );
     } else if (authState.error != null) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Boolean, Enum, DateTime, Text, Integer
+    Column, String, Boolean, Enum, DateTime, Text, Integer, ForeignKey
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -31,6 +31,7 @@ class User(Base):
     )
     full_name     = Column(String(255), nullable=False)
     student_id    = Column(String(20), unique=True, nullable=True, index=True)
+    university_id = Column(UUID(as_uuid=True), ForeignKey("universities.id", ondelete="SET NULL"), nullable=True, index=True)
     university    = Column(String(255), nullable=True)
     major         = Column(String(255), nullable=True)
     avatar_url    = Column(Text, nullable=True)
@@ -45,3 +46,4 @@ class User(Base):
     # Relationships
     intern_profile  = relationship("InternProfile",  back_populates="user", uselist=False, cascade="all, delete-orphan")
     refresh_tokens  = relationship("RefreshToken",   back_populates="user", cascade="all, delete-orphan")
+    university_rel  = relationship("University", back_populates="users", foreign_keys=[university_id])

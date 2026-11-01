@@ -52,6 +52,7 @@ class StorageUtil {
   static Future<void> clearAllTokens() async {
     await _secureStorage.delete(key: 'access_token');
     await _secureStorage.delete(key: 'refresh_token');
+    await _prefs.remove(_keyCompleteProfileSkipped);
   }
 
   // ── Biometric & Remember Login Helpers ─────────────────────────────────────
@@ -82,6 +83,11 @@ class StorageUtil {
   static bool get hasSeenOnboarding => _prefs.getBool('has_seen_onboarding') ?? false;
   static Future<void> setHasSeenOnboarding(bool value) async =>
       await _prefs.setBool('has_seen_onboarding', value);
+
+  static const _keyCompleteProfileSkipped = 'complete_profile_skipped';
+  static bool get hasSkippedCompleteProfile => _prefs.getBool(_keyCompleteProfileSkipped) ?? false;
+  static Future<void> setCompleteProfileSkipped(bool value) async =>
+      await _prefs.setBool(_keyCompleteProfileSkipped, value);
 
   // ── Remember Login Credentials (Secure) ────────────────────────────────────
   /// Lưu email + password vào secure storage cho tính năng "Ghi nhớ đăng nhập"
@@ -126,6 +132,7 @@ class StorageUtil {
 
   static Future<void> clearCachedUser() async {
     await _prefs.remove(_keyCachedUser);
+    await _prefs.remove(_keyCompleteProfileSkipped);
   }
 
   // ── Offline Sync Queue ────────────────────────────────────────────────────

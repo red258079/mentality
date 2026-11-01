@@ -42,16 +42,23 @@ class AccessTokenResponse(BaseModel):
 
 # ── User profile ──────────────────────────────────────────────────────────────
 class UserResponse(BaseModel):
-    id:         UUID
-    email:      str
-    full_name:  str
-    role:       str
-    student_id: Optional[str] = None
-    university: Optional[str] = None
-    major:      Optional[str] = None
-    avatar_url: Optional[str] = None
-    is_active:  bool
-    created_at: datetime
+    id:                    UUID
+    email:                 str
+    full_name:             str
+    role:                  str
+    student_id:            Optional[str] = None
+    university_id:         Optional[UUID] = None
+    university:            Optional[str] = None
+    university_name:       Optional[str] = None
+    university_is_pending: Optional[bool] = None
+    company_id:            Optional[UUID] = None
+    company_name:          Optional[str] = None
+    company_is_pending:    Optional[bool] = None
+    is_pending:            Optional[bool] = None
+    major:                 Optional[str] = None
+    avatar_url:            Optional[str] = None
+    is_active:             bool
+    created_at:            datetime
 
     model_config = {"from_attributes": True}
 
@@ -70,11 +77,16 @@ class ResetPasswordRequest(BaseModel):
 
 # ── Update Profile ─────────────────────────────────────────────────────────
 class UpdateProfileRequest(BaseModel):
-    full_name:  Optional[str] = Field(None, min_length=2, max_length=255)
-    student_id: Optional[str] = Field(None, max_length=20)
-    university: Optional[str] = None
-    major:      Optional[str] = None
-    avatar_url: Optional[str] = None
+    full_name:             Optional[str] = Field(None, min_length=2, max_length=255)
+    student_id:            Optional[str] = Field(None, max_length=20)
+    university_id:         Optional[UUID] = None
+    university:            Optional[str] = None
+    company_id:            Optional[UUID] = None
+    other_university_name: Optional[str] = None
+    other_company_name:    Optional[str] = None
+    major:                 Optional[str] = None
+    avatar_url:            Optional[str] = None
+
 
 
 # ── Change Password ─────────────────────────────────────────────────────────

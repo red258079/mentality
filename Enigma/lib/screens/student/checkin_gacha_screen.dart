@@ -22,10 +22,10 @@ class CheckinGachaScreen extends StatefulWidget {
   const CheckinGachaScreen({super.key, this.initialMood});
 
   @override
-  State<CheckinGachaScreen> createState() => _CheckinGachaScreenState();
+  State<CheckinGachaScreen> createState() => CheckinGachaScreenState();
 }
 
-class _CheckinGachaScreenState extends State<CheckinGachaScreen>
+class CheckinGachaScreenState extends State<CheckinGachaScreen>
     with TickerProviderStateMixin {
   // GlobalKeys for Feature Onboarding Tour
   final GlobalKey _moodKey = GlobalKey();
@@ -297,6 +297,8 @@ class _CheckinGachaScreenState extends State<CheckinGachaScreen>
       }
     }
   }
+
+  void startTour({bool force = false}) => _startTour(force: force);
 
   void _startTour({bool force = false}) {
     FeatureTour.start(

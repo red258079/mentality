@@ -21,6 +21,7 @@ class InternProfile(Base):
 
     id                     = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id                = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    company_id             = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     company_name           = Column(String(255), default="LG Display")
     department             = Column(String(255), nullable=True)
     intern_start_date      = Column(Date, nullable=True)
@@ -48,5 +49,6 @@ class InternProfile(Base):
     updated_at             = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    user = relationship("User", back_populates="intern_profile")
+    user        = relationship("User", back_populates="intern_profile")
+    company_rel = relationship("Company", back_populates="intern_profiles", foreign_keys=[company_id])
 

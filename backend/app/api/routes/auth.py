@@ -146,7 +146,8 @@ async def get_me(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ hoặc đã hết hạn.")
 
-    return UserResponse.model_validate(user)
+    from app.api.routes.users import build_user_profile_response
+    return await build_user_profile_response(db, user)
 
 
 # ── POST /auth/logout ─────────────────────────────────────────────────────────

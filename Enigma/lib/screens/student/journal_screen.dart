@@ -4,15 +4,25 @@ import 'package:provider/provider.dart';
 import '../../theme/app_theme.dart';
 import '../../core/api/life_log_repository.dart';
 import '../../state/app_state.dart';
+import '../../core/onboarding/models/feature_keys.dart';
+import '../../core/onboarding/models/onboarding_step.dart';
+import '../../core/onboarding/feature_tour_controller.dart';
+import '../../core/onboarding/widgets/help_guide_button.dart';
 
 class JournalScreen extends StatefulWidget {
   const JournalScreen({super.key});
 
   @override
-  State<JournalScreen> createState() => _JournalScreenState();
+  State<JournalScreen> createState() => JournalScreenState();
 }
 
-class _JournalScreenState extends State<JournalScreen> {
+class JournalScreenState extends State<JournalScreen> {
+  final GlobalKey _stressKey = GlobalKey();
+  final GlobalKey _sleepKey = GlobalKey();
+  final GlobalKey _symptomsKey = GlobalKey();
+  final GlobalKey _noteKey = GlobalKey();
+  final GlobalKey _saveKey = GlobalKey();
+
   double _stressLevel = 3;
   double _sleepHours = 7;
   final TextEditingController _noteController = TextEditingController();
@@ -36,6 +46,56 @@ class _JournalScreenState extends State<JournalScreen> {
   void initState() {
     super.initState();
     _checkTodayLog();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        startTour(force: false);
+      }
+    });
+  }
+
+  void startTour({bool force = false}) {
+    final allSteps = [
+      OnboardingStep(
+        targetKey: _stressKey,
+        title: 'Mức Độ Căng Thẳng',
+        description: 'Kéo thanh trượt để tự đánh giá mức độ căng thẳng sau ngày làm việc.',
+        icon: Icons.psychology_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _sleepKey,
+        title: 'Thời Gian Ngủ',
+        description: 'Ghi lại số giờ bạn đã ngủ đêm qua để theo dõi khả năng hồi phục.',
+        icon: Icons.bedtime_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _symptomsKey,
+        title: 'Triệu Chứng Thể Chất',
+        description: 'Chọn các biểu hiện mệt mỏi như đau vai gáy, mỏi mắt để nhận khuyến nghị.',
+        icon: Icons.healing_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _noteKey,
+        title: 'Ghi Chú Tâm Trạng',
+        description: 'Viết vài dòng chia sẻ cảm xúc, suy nghĩ hoặc sự kiện đáng nhớ hôm nay.',
+        icon: Icons.edit_note_rounded,
+      ),
+      OnboardingStep(
+        targetKey: _saveKey,
+        title: 'Lưu Nhật Ký',
+        description: 'Nhấn để lưu lại dữ liệu và cập nhật biểu đồ sức khỏe trên Trang chủ.',
+        icon: Icons.save_rounded,
+      ),
+    ];
+
+    final steps = allSteps.where((s) => s.targetKey.currentContext != null).toList();
+    if (steps.isEmpty) return;
+
+    FeatureTour.start(
+      context,
+      featureKey: FeatureKeys.journal,
+      force: force,
+      steps: steps,
+    );
   }
 
   @override
@@ -151,6 +211,10 @@ class _JournalScreenState extends State<JournalScreen> {
       appBar: AppBar(
         title: const Text('Nhật Ký Hôm Nay'),
         actions: [
+          HelpGuideButton(
+            onTap: () => startTour(force: true),
+            tooltip: 'Xem hướng dẫn Nhật ký',
+          ),
           if (_hasLogToday)
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
@@ -162,7 +226,7 @@ class _JournalScreenState extends State<JournalScreen> {
       body: _isInitialLoading
           ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -189,151 +253,186 @@ class _JournalScreenState extends State<JournalScreen> {
                       ),
                     ),
 
-                  Text('Mức độ căng thẳng', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: AppTheme.cardDecorationFor(context),
+                  KeyedSubtree(
+                    key: _stressKey,
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Slider(
-                          value: _stressLevel,
-                          min: 1,
-                          max: 5,
-                          divisions: 4,
-                          activeColor: _getStressColor(_stressLevel),
-                          label: _getStressLabel(_stressLevel),
-                          onChanged: (val) => setState(() => _stressLevel = val),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('Rất thoải mái', style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceMuted(context))),
-                            Text(
-                              _getStressLabel(_stressLevel),
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: _getStressColor(_stressLevel),
+                        Text('Mức độ căng thẳng', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: AppTheme.cardDecorationFor(context),
+                          child: Column(
+                            children: [
+                              Slider(
+                                value: _stressLevel,
+                                min: 1,
+                                max: 5,
+                                divisions: 4,
+                                activeColor: _getStressColor(_stressLevel),
+                                label: _getStressLabel(_stressLevel),
+                                onChanged: (val) => setState(() => _stressLevel = val),
                               ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Rất thoải mái', style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceMuted(context))),
+                                  Text(
+                                    _getStressLabel(_stressLevel),
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: _getStressColor(_stressLevel),
+                                    ),
+                                  ),
+                                  Text('Rất áp lực', style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceMuted(context))),
+                                ],
+                              )
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  KeyedSubtree(
+                    key: _sleepKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Thời gian ngủ đêm qua', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: AppTheme.cardDecorationFor(context),
+                          child: Column(
+                            children: [
+                              Text(
+                                '${_sleepHours.toStringAsFixed(1)} giờ',
+                                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                      color: AppTheme.sleepColor,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                              ),
+                              Slider(
+                                value: _sleepHours,
+                                min: 3,
+                                max: 12,
+                                divisions: 18,
+                                activeColor: AppTheme.sleepColor,
+                                onChanged: (val) => setState(() => _sleepHours = val),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  KeyedSubtree(
+                    key: _symptomsKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Triệu chứng nổi bật', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _symptoms.map((s) {
+                            final isSelected = _selectedSymptoms.contains(s);
+                            return FilterChip(
+                              label: Text(s),
+                              selected: isSelected,
+                              onSelected: (val) {
+                                setState(() {
+                                  if (val) {
+                                    _selectedSymptoms.add(s);
+                                  } else {
+                                    _selectedSymptoms.remove(s);
+                                  }
+                                });
+                              },
+                              selectedColor: AppTheme.primary,
+                              checkmarkColor: Colors.white,
+                              backgroundColor: AppTheme.surfaceAltColor(context),
+                              labelStyle: TextStyle(
+                                color: isSelected ? Colors.white : AppTheme.onSurfaceSecondary(context),
+                                fontSize: 12,
+                              ),
+                              side: BorderSide(color: isSelected ? AppTheme.primary : AppTheme.borderColor(context)),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  KeyedSubtree(
+                    key: _noteKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Ghi chú thêm', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _noteController,
+                          maxLines: 4,
+                          style: TextStyle(color: AppTheme.onSurface(context), fontSize: 14),
+                          decoration: InputDecoration(
+                            hintText: 'Hôm nay bạn cảm thấy thế nào? (VD: Hơi mệt ca đêm, đau lưng...)',
+                            hintStyle: TextStyle(color: AppTheme.onSurfaceMuted(context), fontSize: 13),
+                            filled: true,
+                            fillColor: AppTheme.surfaceAltColor(context),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide(color: AppTheme.borderColor(context)),
                             ),
-                            Text('Rất áp lực', style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceMuted(context))),
-                          ],
-                        )
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  Text('Thời gian ngủ đêm qua', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: AppTheme.cardDecorationFor(context),
-                    child: Column(
-                      children: [
-                        Text(
-                          '${_sleepHours.toStringAsFixed(1)} giờ',
-                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                color: AppTheme.sleepColor,
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        Slider(
-                          value: _sleepHours,
-                          min: 3,
-                          max: 12,
-                          divisions: 18,
-                          activeColor: AppTheme.sleepColor,
-                          onChanged: (val) => setState(() => _sleepHours = val),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide(color: AppTheme.borderColor(context)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: const BorderSide(color: AppTheme.primary),
+                            ),
+                          ),
                         ),
                       ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  Text('Triệu chứng nổi bật', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _symptoms.map((s) {
-                      final isSelected = _selectedSymptoms.contains(s);
-                      return FilterChip(
-                        label: Text(s),
-                        selected: isSelected,
-                        onSelected: (val) {
-                          setState(() {
-                            if (val) {
-                              _selectedSymptoms.add(s);
-                            } else {
-                              _selectedSymptoms.remove(s);
-                            }
-                          });
-                        },
-                        selectedColor: AppTheme.primary,
-                        checkmarkColor: Colors.white,
-                        backgroundColor: AppTheme.surfaceAltColor(context),
-                        labelStyle: TextStyle(
-                          color: isSelected ? Colors.white : AppTheme.onSurfaceSecondary(context),
-                          fontSize: 12,
-                        ),
-                        side: BorderSide(color: isSelected ? AppTheme.primary : AppTheme.borderColor(context)),
-                      );
-                    }).toList(),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  Text('Ghi chú thêm', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _noteController,
-                    maxLines: 4,
-                    style: TextStyle(color: AppTheme.onSurface(context), fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Hôm nay bạn cảm thấy thế nào? (VD: Hơi mệt ca đêm, đau lưng...)',
-                      hintStyle: TextStyle(color: AppTheme.onSurfaceMuted(context), fontSize: 13),
-                      filled: true,
-                      fillColor: AppTheme.surfaceAltColor(context),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(color: AppTheme.borderColor(context)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(color: AppTheme.borderColor(context)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: const BorderSide(color: AppTheme.primary),
-                      ),
                     ),
                   ),
 
                   const SizedBox(height: 32),
 
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _submitJournal,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: AppTheme.primary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  KeyedSubtree(
+                    key: _saveKey,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _submitJournal,
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: AppTheme.primary,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : Text(
+                                _hasLogToday ? 'Cập Nhật Nhật Ký' : 'Lưu Nhật Ký',
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                              ),
                       ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : Text(
-                              _hasLogToday ? 'Cập Nhật Nhật Ký' : 'Lưu Nhật Ký',
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                            ),
                     ),
                   ),
 
