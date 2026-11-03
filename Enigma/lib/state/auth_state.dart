@@ -545,6 +545,7 @@ class AuthState extends ChangeNotifier {
     required String name,
     String? studentId,
     String? university,
+    String? company,
     String? major,
     String? avatarUrl,
   }) async {
@@ -559,6 +560,8 @@ class AuthState extends ChangeNotifier {
           name: name,
           studentId: studentId,
           university: university,
+          universityName: university,
+          companyName: company,
           major: major,
           avatarUrl: avatarUrl ?? _user?.avatarUrl,
         );
@@ -571,6 +574,8 @@ class AuthState extends ChangeNotifier {
         'full_name': name.trim(),
         'student_id': studentId?.trim(),
         'university': university?.trim(),
+        'company': company?.trim(),
+        'company_name': company?.trim(),
         'major': major?.trim(),
       };
       if (avatarUrl != null) {
@@ -583,6 +588,8 @@ class AuthState extends ChangeNotifier {
           name: name,
           studentId: studentId,
           university: university,
+          universityName: university,
+          companyName: company,
           major: major,
           avatarUrl: avatarUrl ?? _user?.avatarUrl,
         );

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/services/workplace_service.dart';
 import '../../core/utils/storage.dart';
 import '../../models/catalog_item.dart';
 import '../../navigation/student_nav.dart';
@@ -101,8 +102,11 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
       if (!mounted) return;
 
-      // Refresh current user in AuthState
-      await context.read<AuthState>().refreshProfile();
+      // Refresh current user in AuthState & WorkplaceService
+      await Future.wait([
+        context.read<AuthState>().refreshProfile(),
+        WorkplaceService.instance.fetchProfile(),
+      ]);
 
       if (!mounted) return;
 

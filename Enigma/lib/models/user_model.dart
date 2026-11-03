@@ -38,20 +38,26 @@ class UserModel {
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    final rawUni = json['university']?.toString();
+    final rawUniName = json['university_name']?.toString();
+    final resolvedUni = (rawUniName != null && rawUniName.trim().isNotEmpty)
+        ? rawUniName.trim()
+        : ((rawUni != null && rawUni.trim().isNotEmpty) ? rawUni.trim() : null);
+
     return UserModel(
       id: json['id']?.toString() ?? '',
       email: json['email'] ?? '',
       fullName: json['full_name'] ?? 'Sinh viên Enigma',
       role: json['role'] ?? 'student',
       studentId: json['student_id'],
-      university: json['university'],
+      university: resolvedUni,
       major: json['major'],
       avatarUrl: json['avatar_url'],
       isActive: json['is_active'] ?? true,
-      companyName: json['company_name'] ?? 'LG Display',
+      companyName: json['company_name'] ?? json['company'] ?? 'LG Display',
       currentPhase: json['current_phase'] ?? 'adaptation',
       universityId: json['university_id']?.toString(),
-      universityName: json['university_name'],
+      universityName: resolvedUni,
       universityIsPending: json['university_is_pending'] as bool?,
       companyId: json['company_id']?.toString(),
       companyIsPending: json['company_is_pending'] as bool?,

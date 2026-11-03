@@ -82,6 +82,8 @@ class UpdateProfileRequest(BaseModel):
     university_id:         Optional[UUID] = None
     university:            Optional[str] = None
     company_id:            Optional[UUID] = None
+    company:               Optional[str] = None
+    company_name:          Optional[str] = None
     other_university_name: Optional[str] = None
     other_company_name:    Optional[str] = None
     major:                 Optional[str] = None

@@ -40,7 +40,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showEditProfileSheet(BuildContext context, User user) {
     final nameCtrl = TextEditingController(text: user.name);
     final studentIdCtrl = TextEditingController(text: user.studentId ?? '');
-    final universityCtrl = TextEditingController(text: user.university ?? '');
+    final universityCtrl = TextEditingController(text: user.universityName ?? user.university ?? '');
+    final companyCtrl = TextEditingController(
+      text: user.companyName ?? WorkplaceService.instance.profile?.companyName ?? '',
+    );
     final majorCtrl = TextEditingController(text: user.major ?? '');
     final formKey = GlobalKey<FormState>();
 
@@ -139,6 +142,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 14),
 
+                  // Công ty thực tập
+                  TextFormField(
+                    controller: companyCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Công ty / Đơn vị thực tập',
+                      prefixIcon: const Icon(Icons.business_rounded),
+                      filled: true,
+                      fillColor: AppTheme.surfaceAltColor(context),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
                   // Ngành học
                   TextFormField(
                     controller: majorCtrl,
@@ -176,8 +192,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   name: nameCtrl.text,
                                   studentId: studentIdCtrl.text,
                                   university: universityCtrl.text,
+                                  company: companyCtrl.text,
                                   major: majorCtrl.text,
                                 );
+
+                            if (success) {
+                              await WorkplaceService.instance.fetchProfile();
+                              if (mounted) setState(() {});
+                            }
 
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -715,6 +737,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ? cachedCompanyName
                 : 'Chưa cập nhật'));
 
+    final String universityDisplayName = (user.universityName != null && user.universityName!.trim().isNotEmpty)
+        ? user.universityName!
+        : ((user.university != null && user.university!.trim().isNotEmpty)
+            ? user.university!
+            : 'Chưa cập nhật');
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Thông tin tài khoản'),
@@ -908,7 +936,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               context,
               icon: Icons.school_outlined,
               label: 'Trường đào tạo',
-              value: (user.university != null && user.university!.isNotEmpty) ? user.university! : 'Chưa cập nhật',
+              value: universityDisplayName,
             ),
             _buildDetailTile(
               context,
