@@ -15,14 +15,15 @@ class StudentNav extends StatefulWidget {
   const StudentNav({super.key});
 
   static StudentNavState? of(BuildContext context) =>
-      context.findAncestorStateOfType<StudentNavState>();
+      context.findAncestorStateOfType<StudentNavState>() ??
+      StudentNavState._activeState;
 
   static void switchToTab(BuildContext context, int index) {
-    context.findAncestorStateOfType<StudentNavState>()?.switchToTab(index);
+    of(context)?.switchToTab(index);
   }
 
   static void setNavVisible(BuildContext context, bool visible) {
-    context.findAncestorStateOfType<StudentNavState>()?.setNavVisible(visible);
+    of(context)?.setNavVisible(visible);
   }
 
   @override
@@ -30,8 +31,11 @@ class StudentNav extends StatefulWidget {
 }
 
 class StudentNavState extends State<StudentNav> {
+  static StudentNavState? _activeState;
+
   int _currentIndex = 0;
   bool _isNavVisible = true;
+  String? _pendingChatPrompt;
 
   final GlobalKey<HomeScreenState> _homeKey = GlobalKey<HomeScreenState>();
   final GlobalKey<TasksScreenState> _tasksKey = GlobalKey<TasksScreenState>();
@@ -48,6 +52,20 @@ class StudentNavState extends State<StudentNav> {
     4: FeatureKeys.chat,
   };
 
+  @override
+  void initState() {
+    super.initState();
+    _activeState = this;
+  }
+
+  @override
+  void dispose() {
+    if (identical(_activeState, this)) {
+      _activeState = null;
+    }
+    super.dispose();
+  }
+
   void switchToTab(int index) {
     if (!mounted || index < 0 || index >= _screens.length) return;
     setState(() {
@@ -55,6 +73,29 @@ class StudentNavState extends State<StudentNav> {
       _isNavVisible = true;
     });
     _triggerTabTourIfNeeded(index);
+  }
+
+  /// Switches to the Chat tab (index 4) and passes [question] to the existing
+  /// [ChatScreenState.askAbout], deferring to a post-frame callback if the
+  /// chat tab is not yet built.
+  void askAboutInChat(String question) {
+    switchToTab(4);
+    final chatState = _chatKey.currentState;
+    if (chatState != null && chatState.mounted) {
+      _pendingChatPrompt = null;
+      chatState.askAbout(question);
+    } else {
+      _pendingChatPrompt = question;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final pending = _pendingChatPrompt;
+        final readyChat = _chatKey.currentState;
+        if (pending != null && readyChat != null && readyChat.mounted) {
+          _pendingChatPrompt = null;
+          readyChat.askAbout(pending);
+        }
+      });
+    }
   }
 
   void openCheckin(MoodLevel mood) {

@@ -1,3 +1,4 @@
+import html
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
@@ -15,6 +16,7 @@ from app.db.models.handbook_article import HandbookArticle, ArticleStatus
 from app.db.models.task import Task, UserTaskProgress
 from app.db.models.notification_log import NotificationLog, NotificationType
 from app.db.models.journal import Journal
+from app.db.models.crisis_flag import CrisisFlag, CrisisFlagStatus
 
 from app.db.models.catalog import University, Company
 from app.schemas.catalog import AdminCatalogReviewRequest
@@ -556,6 +558,39 @@ async def get_burnout_alerts(db: AsyncSession = Depends(get_db)):
     rows = result.all()
 
     alerts = []
+
+    # Include recent crisis flags from AI chat (safely escaped, no user message logged or stored)
+    crisis_res = await db.execute(
+        select(CrisisFlag, User, InternProfile)
+        .join(User, CrisisFlag.user_id == User.id)
+        .outerjoin(InternProfile, User.id == InternProfile.user_id)
+        .where(CrisisFlag.status != 'resolved')
+        .order_by(CrisisFlag.created_at.desc())
+        .limit(10)
+    )
+    for flag, u, p in crisis_res.all():
+        phase = None
+        if p and p.current_phase:
+            phase = p.current_phase.value if hasattr(p.current_phase, "value") else str(p.current_phase)
+        alerts.append({
+            "journal_id": f"crisis-{flag.id}",
+            "user_id": str(u.id),
+            "full_name": html.escape(u.full_name or "Sinh viên"),
+            "student_id": html.escape(u.student_id or "") or None,
+            "email": html.escape(u.email or ""),
+            "company_name": html.escape(p.company_name or "") if (p and p.company_name) else None,
+            "department": html.escape(p.department or "") if (p and p.department) else None,
+            "current_phase": phase,
+            "journal_date": flag.created_at.date().isoformat() if flag.created_at else "",
+            "stress_level": 5,
+            "sleep_hours": None,
+            "physical_symptoms": [],
+            "note": f"[Cảnh báo Khủng hoảng AI Chat - {flag.tier.upper()}] Trạng thái: {flag.status}",
+            "ai_sentiment": "crisis",
+            "risk_level": "critical",
+            "intervention_recommended": "Liên hệ khẩn cấp với sinh viên hoặc điều phối hỗ trợ y tế / gia đình ngay lập tức."
+        })
+
     for j, u, p in rows:
         phase = None
         if p and p.current_phase:
@@ -745,3 +780,77 @@ async def send_student_intervention(payload: InterventionRequest, db: AsyncSessi
 
 
 
+
+
+@router.post("/chat/cleanup", summary="Kích hoạt dọn dẹp các tin nhắn chat cũ quá hạn lưu trữ")
+async def trigger_chat_retention_cleanup(
+    days: Optional[int] = None,
+    admin_user: User = Depends(get_authed_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    from app.services.chat_service import ChatService
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if days is not None and days < 7:
+        raise HTTPException(
+            status_code=400,
+            detail="Thời gian lưu trữ tối thiểu phải từ 7 ngày trở lên (minimum retention_days is 7)."
+        )
+
+    deleted = await ChatService.cleanup_expired_chat_history(db, retention_days=days)
+    logger.info(f"[AUDIT] Admin {admin_user.email} (ID {admin_user.id}) đã kích hoạt dọn dẹp chat: đã xóa {deleted} tin nhắn quá hạn.")
+    return {
+        "status": "success",
+        "deleted_messages": deleted,
+        "retention_days": days or settings.CHAT_RETENTION_DAYS
+    }
+
+
+@router.get("/missing-topics", summary="Thống kê các chủ đề cẩm nang sinh viên quan tâm nhưng thiếu tài liệu")
+async def get_missing_topics_summary(
+    admin_user: User = Depends(get_authed_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Thống kê các chủ đề cẩm nang còn thiếu thông tin (No-Info fallback).
+    CHỈ TRẢ VỀ CÁC CHỦ ĐỀ CÓ TỪ 3 LƯỢT HỎI TRỞ LÊN.
+    Tuyệt đối không chứa user_id hay nội dung tin nhắn.
+    """
+    from app.db.models.handbook_missing_topic import HandbookMissingTopic
+    from sqlalchemy import select, func
+
+    stmt = (
+        select(
+            HandbookMissingTopic.topic,
+            func.sum(HandbookMissingTopic.count).label("total_hits"),
+            func.max(HandbookMissingTopic.recorded_date).label("last_requested_date")
+        )
+        .group_by(HandbookMissingTopic.topic)
+        .having(func.sum(HandbookMissingTopic.count) >= 3)
+        .order_by(func.sum(HandbookMissingTopic.count).desc())
+    )
+    res = await db.execute(stmt)
+    rows = res.all()
+
+    topic_vi_map = {
+        "allowance_salary": "Lương & Phụ cấp ca kíp",
+        "night_shift_leave": "Xin nghỉ phép & Đổi ca làm",
+        "dormitory": "Ký túc xá & Phòng trọ",
+        "chemical_safety": "An toàn hóa chất & Môi trường",
+        "uniform_esd": "Trang phục bảo hộ & Giày ESD",
+        "shuttle_bus": "Xe bus & Đưa đón thực tập",
+        "insurance": "Bảo hiểm & Y tế",
+        "workplace_rules": "Nội quy nhà máy & Quy tắc 5S",
+        "other": "Chủ đề khác",
+    }
+
+    return [
+        {
+            "topic": r.topic,
+            "topic_label": topic_vi_map.get(r.topic, r.topic),
+            "total_hits": int(r.total_hits),
+            "last_requested_date": r.last_requested_date.isoformat() if r.last_requested_date else None
+        }
+        for r in rows
+    ]

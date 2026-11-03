@@ -123,6 +123,8 @@
 
     // Burnout Alert Center
     burnoutCardsContainer: document.getElementById('burnout-cards-container'),
+    navBadgeCrisis: document.getElementById('nav-badge-crisis'),
+    crisisFlagsTbody: document.getElementById('crisis-flags-tbody'),
 
     // Handbook
     handbookSearchInput: document.getElementById('handbook-search-input'),
@@ -225,6 +227,10 @@
       title: 'Duyệt Đơn Vị Đề Xuất (Chờ Duyệt)',
       subtitle: 'Xem xét phê duyệt, gộp vào đơn vị chuẩn hóa hoặc từ chối các trường và công ty do sinh viên đề xuất',
     },
+    crisis: {
+      title: 'Trung Tâm Cảnh Báo Khủng Hoảng (AI Chat)',
+      subtitle: 'Theo dõi các trường hợp bộc lộ nguy cơ tự hại trong AI Chat và cập nhật tiến độ xử lý an toàn',
+    },
     burnout: {
       title: 'Trung Tâm Cảnh Báo Kiệt Sức',
       subtitle: 'Sàng lọc nguy cơ stress cao, thiếu ngủ ca đêm và đưa ra can thiệp kịp thời',
@@ -268,6 +274,8 @@
       renderDashboardCharts();
     } else if (tabName === 'students') {
       renderStudentsTable();
+    } else if (tabName === 'crisis') {
+      renderCrisisFlagsTable();
     } else if (tabName === 'burnout') {
       renderBurnoutCards();
     } else if (tabName === 'handbook') {
@@ -2516,7 +2524,108 @@
   }
 
   // ─── Public Window API for inline onclick handlers ───────────────────────────
+  
+  // ─── Crisis Flags Management (AI Chat Guardrail) ───────────────────────────
+  async function loadCrisisFlags() {
+    if (!STATE.adminToken) return;
+    try {
+      const data = await apiFetch('/admin/crisis-flags');
+      if (Array.isArray(data)) {
+        STATE.crisisFlags = data;
+        const newCount = data.filter(f => f.status === 'new').length;
+        if (DOM.navBadgeCrisis) {
+          DOM.navBadgeCrisis.textContent = newCount;
+          DOM.navBadgeCrisis.style.display = newCount > 0 ? 'inline-block' : 'none';
+        }
+        if (STATE.activeTab === 'crisis') {
+          renderCrisisFlagsTable();
+        }
+      }
+    } catch (e) {
+      console.warn('Không thể tải crisis flags:', e);
+    }
+  }
+
+  function renderCrisisFlagsTable() {
+    if (!DOM.crisisFlagsTbody) return;
+    const flags = STATE.crisisFlags || [];
+    if (flags.length === 0) {
+      DOM.crisisFlagsTbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="text-center text-subtle p-6">
+            🎉 Không có cảnh báo khủng hoảng nào cần xử lý.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    DOM.crisisFlagsTbody.innerHTML = flags.map(f => {
+      const isNew = f.status === 'new';
+      const statusBadge = isNew
+        ? '<span class="badge badge-danger pulse-dot">MỚI (CHƯA XỬ LÝ)</span>'
+        : f.status === 'contacted'
+          ? '<span class="badge badge-warning">ĐÃ LIÊN HỆ</span>'
+          : '<span class="badge badge-success">ĐÃ GIẢI QUYẾT</span>';
+
+      const tierBadge = f.tier === 'explicit'
+        ? '<span class="badge badge-danger">NGHIÊM TRỌNG (EXPLICIT)</span>'
+        : '<span class="badge badge-amber">CẦN CHÚ Ý (AMBIGUOUS)</span>';
+
+      return `
+        <tr>
+          <td><small class="text-subtle">${escapeHtml(f.created_at ? f.created_at.slice(0, 16).replace('T', ' ') : 'Vừa xong')}</small></td>
+          <td>
+            <strong>${escapeHtml(f.full_name || 'Sinh viên')}</strong><br>
+            <small class="text-subtle">MSSV: ${escapeHtml(f.student_id || 'Chưa có')} | ${escapeHtml(f.email || '')}</small>
+          </td>
+          <td>${tierBadge}</td>
+          <td>${statusBadge}</td>
+          <td>
+            <input type="text" id="flag-note-${escapeHtml(f.id)}" class="input-control input-sm" style="width: 220px;" 
+                   value="${escapeHtml(f.admin_note || '')}" placeholder="Ghi chú người xử lý...">
+          </td>
+          <td>
+            <div class="btn-group">
+              ${isNew ? `
+                <button class="btn btn-sm btn-primary" onclick="window.EnigmaApp.updateCrisisStatus('${escapeHtml(f.id)}', 'contacted')">
+                  📞 Đã Liên Hệ
+                </button>
+              ` : ''}
+              ${f.status !== 'resolved' ? `
+                <button class="btn btn-sm btn-success" onclick="window.EnigmaApp.updateCrisisStatus('${escapeHtml(f.id)}', 'resolved')">
+                  ✓ Hoàn Tất
+                </button>
+              ` : `
+                <button class="btn btn-sm btn-secondary" onclick="window.EnigmaApp.updateCrisisStatus('${escapeHtml(f.id)}', 'contacted')">
+                  Mở Lại
+                </button>
+              `}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+
   window.EnigmaApp = {
+        refreshCrisisFlags: async () => {
+      await loadCrisisFlags();
+      showToast('Đã làm mới danh sách cảnh báo khủng hoảng!', 'success');
+    },
+    updateCrisisStatus: async (flagId, newStatus) => {
+      const noteInput = document.getElementById(`flag-note-${flagId}`);
+      const adminNote = noteInput ? noteInput.value.trim() : '';
+      const res = await apiFetch(`/admin/crisis-flags/${flagId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: newStatus, admin_note: adminNote })
+      });
+      if (res) {
+        showToast(`Đã cập nhật trạng thái cảnh báo sang: ${newStatus}`, 'success');
+        await loadCrisisFlags();
+      }
+    },
     openUserDetail,
     openIntervention: (userId) => {
       openInterventionModal(userId);
@@ -2668,6 +2777,14 @@
   }
 
   // ─── Initialize App on Page Load ──────────────────────────────────────────────
+  
+  // Periodic auto-refresh for crisis flags (every 30 seconds)
+  setInterval(() => {
+    if (STATE.adminToken && !STATE.isDemoMode) {
+      loadCrisisFlags();
+    }
+  }, 30000);
+
   document.addEventListener('DOMContentLoaded', () => {
     if (!STATE.adminToken) {
       showLoginScreen();

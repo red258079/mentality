@@ -23,9 +23,9 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
 
     // Verify header and core sections exist
-    expect(find.text('Chỉ số phục hồi sức khỏe'), findsOneWidget);
+    expect(find.text('Sức khỏe của bạn'), findsOneWidget);
     expect(find.text('Cảm xúc hôm nay'), findsOneWidget);
-    expect(find.text('What Next?'), findsOneWidget);
+    expect(find.text('Chăm sóc bản thân'), findsOneWidget);
 
     // Cancel timers
     SyncService.instance.cancelTimers();

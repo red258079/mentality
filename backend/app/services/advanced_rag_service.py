@@ -1,12 +1,44 @@
 import logging
 import asyncio
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 import httpx
+from sqlalchemy import select, desc
+from uuid import UUID
 
 from app.core.config import settings
 from app.services.vector_store_service import VectorStoreService
 from app.services.ai_agent_service import AIAgentService, RiskAssessmentResult
+from app.services.ai_guardrails import (
+    route_message,
+    detect_crisis,
+    wrap_user_message,
+    safety_policy_block,
+    check_output,
+    StreamingOutputGuard,
+    build_fixed_crisis_message,
+    build_crisis_followup,
+    build_ambiguous_checkin,
+    build_injection_refusal,
+    build_off_topic_refusal,
+    classify_query_type,
+    wrap_document_chunk,
+    validate_citations,
+    classify_missing_topic,
+    CRISIS_MESSAGE_MARKER,
+    NO_INFO_PREFIX,
+    SAFE_MEDICAL_FALLBACK,
+    STAGE_CRISIS,
+    STAGE_INJECTION,
+    STAGE_OFF_TOPIC,
+    STAGE_LLM,
+    TIER_EXPLICIT,
+    TIER_AMBIGUOUS,
+    INTENT_GREETING,
+    INTENT_CLOSING,
+    INTENT_DOMAIN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,30 +58,19 @@ GEMINI_MODELS = [
 
 class AdvancedRAGService:
     """
-    Kiến trúc RAG Đa tầng (Multi-tier Resilient RAG Architecture):
-    1. Intent Routing: Phân loại ý định thông minh (Chào hỏi / Cẩm nang / Nguy cơ).
-    2. Hybrid Vector Retrieval: Tìm kiếm ngữ nghĩa ChromaDB có ngưỡng lọc tin cậy.
-    3. Multi-Model Cascade: Tự động chuyển đổi mô hình dự phòng khi gặp sự cố hạn ngạch (429/timeout).
-    4. Context-Aware Dynamic Fallback: Phản hồi chính xác ngay cả khi ngoại tuyến hoặc mất kết nối API.
+    Kiến trúc RAG Đa tầng có Bảo vệ An toàn (Safety-Guarded Multi-Tier RAG Architecture):
+    1. Crisis Check FIRST: 3 tiers (explicit -> fixed message + admin flag; ambiguous -> gentle checkin; ordinary stress).
+    2. Prompt Injection Check: Regex ranh giới từ, loại bỏ bypass/jailbreak, bọc <student_message>.
+    3. Scope Policy: Mặc định ALLOW (kể cả áp lực tiền bạc, gia đình, tình cảm); chỉ từ chối coding, giải bài tập hộ, chính trị, đầu tư, giải trí.
+    4. RAG Grounding & Fallback: Bám cẩm nang; nếu không có thông tin thì nói rõ "chưa có thông tin trong cẩm nang".
+    5. Output Check: Kiểm tra đơn thuốc, liều lượng (mg/viên) và chẩn đoán khẳng định trước khi trả cho sinh viên.
     """
 
     @staticmethod
     def classify_intent(query: str) -> str:
-        """Phân loại ý định người dùng để tối ưu hóa luồng xử lý (Intent Routing)."""
-        clean_q = query.lower().strip()
-        
-        # 1. Chào hỏi / Hỏi về Enigma AI
-        greetings = ["hello", "hi", "chào", "xin chào", "alo", "helo", "ban la ai", "bạn là ai", "ai vậy", "giới thiệu"]
-        if clean_q in greetings or any(clean_q.startswith(g) for g in ["chào", "xin chào", "hello", "hi "]):
-            return "GREETING"
-
-        # 2. Cảm ơn / Tạm biệt
-        thanks = ["cảm ơn", "cam on", "thank", "thanks", "tạm biệt", "tam biet", "bye", "ok cảm ơn"]
-        if any(t in clean_q for t in thanks):
-            return "CLOSING"
-
-        # 3. Mặc định là câu hỏi nghiệp vụ / cẩm nang
-        return "DOMAIN_QUERY"
+        """Giữ tương thích ngược với các caller cũ."""
+        decision = route_message(query)
+        return decision.intent
 
     @staticmethod
     def expand_query(query: str) -> List[str]:
@@ -76,6 +97,108 @@ class AdvancedRAGService:
         return queries
 
     @staticmethod
+    async def _has_recent_crisis_flag(db, user_id: str, hours: int = 6) -> bool:
+        """Kiểm tra xem sinh viên đã có cảnh báo khủng hoảng gần đây chưa để tránh duplicate flag."""
+        if not db or not user_id:
+            return False
+        try:
+            from app.db.models.crisis_flag import CrisisFlag
+            from uuid import UUID as PyUUID
+
+            uid = PyUUID(str(user_id)) if not isinstance(user_id, PyUUID) else user_id
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            stmt = select(CrisisFlag.id).where(
+                CrisisFlag.user_id == uid,
+                CrisisFlag.created_at >= cutoff
+            ).limit(1)
+            res = await db.execute(stmt)
+            return res.scalar_one_or_none() is not None
+        except Exception as e:
+            logger.warning(f"[Guardrails] Không thể kiểm tra crisis_flag gần đây: {e}")
+            return False
+
+    @staticmethod
+    async def _flag_crisis_for_admin(db, user_id: str, tier: str = TIER_EXPLICIT) -> bool:
+        """Ghi nhận cờ cảnh báo khủng hoảng vào database (chỉ metadata, KHÔNG lưu nội dung tin nhắn)."""
+        if not db or not user_id:
+            return False
+        try:
+            from app.db.models.crisis_flag import CrisisFlag
+            from uuid import UUID as PyUUID
+
+            uid = PyUUID(str(user_id)) if not isinstance(user_id, PyUUID) else user_id
+            flag = CrisisFlag(
+                user_id=uid,
+                tier=tier,
+                source="chat",
+                status="new"
+            )
+            db.add(flag)
+            await db.flush()
+            logger.critical(f"[CRISIS FLAG] Đã ghi nhận cờ khủng hoảng cho user {user_id} (tier={tier})")
+            return True
+        except Exception as e:
+            logger.error(f"[CRISIS FLAG] Không thể lưu crisis_flag: {e}")
+            return False
+
+    @staticmethod
+    async def _record_missing_topic(db, query: str):
+        """Ghi nhận chủ đề cẩm nang còn thiếu vào bảng handbook_missing_topics (chỉ đếm, không lưu tin nhắn, không lưu user_id)."""
+        if not db:
+            return
+        try:
+            from datetime import date
+            from app.db.models.handbook_missing_topic import HandbookMissingTopic
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            topic = classify_missing_topic(query)
+            today = date.today()
+
+            stmt = pg_insert(HandbookMissingTopic).values(
+                topic=topic,
+                recorded_date=today,
+                count=1
+            ).on_conflict_do_update(
+                constraint='uq_topic_date',
+                set_={'count': HandbookMissingTopic.count + 1}
+            )
+            await db.execute(stmt)
+            await db.commit()
+            logger.info(f"[Topic Tracking] Da ghi nhan thieu thong tin cho chu de: {topic}")
+        except Exception as e:
+            logger.warning(f"[Topic Tracking] Khong the ghi nhan missing topic: {e}")
+
+    @staticmethod
+    def _evaluate_real_risk(
+        stress_level: int = 2,
+        recent_symptoms: Optional[List[str]] = None,
+        default_reason: str = "Đã đánh giá thông qua luồng an toàn."
+    ) -> Dict[str, Any]:
+        reasons = []
+        level = "GREEN"
+        if stress_level >= 4:
+            level = "YELLOW"
+            reasons.append(f"Mức độ căng thẳng được ghi nhận ở mức cao ({stress_level}/5).")
+        if recent_symptoms:
+            reasons.append(f"Triệu chứng gần đây: {', '.join(recent_symptoms)}")
+            critical_symptoms = ["mất ngủ", "kiệt sức", "hoảng loạn", "đau ngực", "khó thở", "chóng mặt", "ngất xỉu"]
+            if any(any(cs in sym.lower() for cs in critical_symptoms) for sym in recent_symptoms):
+                level = "YELLOW"
+        if not reasons:
+            reasons.append(default_reason)
+
+        actions = []
+        if level == "YELLOW":
+            actions.append("Khuyến khích nghỉ ngơi và trao đổi với Quản lý/Y tế công ty nếu cần.")
+
+        return {
+            "level": level,
+            "reasons": reasons,
+            "trigger_emergency": False,
+            "recommended_actions": actions,
+        }
+
+    @staticmethod
     async def generate_advanced_rag_response(
         query: str,
         user_name: str = "Sinh viên",
@@ -86,26 +209,110 @@ class AdvancedRAGService:
         top_k: int = 3,
         user_id: Optional[str] = None,
         db=None,
-        enable_function_calling: bool = True
+        enable_function_calling: bool = False
     ) -> Dict[str, Any]:
-        """Điều phối toàn bộ quy trình RAG hợp lý, logic và không gián đoạn."""
-        intent = AdvancedRAGService.classify_intent(query)
+        """Điều phối toàn bộ quy trình RAG tuân thủ triệt để Guardrails."""
 
-        # 1. Đánh giá rủi ro tâm lý
-        risk_result: RiskAssessmentResult = AIAgentService.evaluate_psychological_risk(
-            stress_level=stress_level,
-            sleep_hours=sleep_hours,
-            note_text=query,
-            physical_symptoms=recent_symptoms
-        )
+        # ─── BƯỚC 1: ĐIỀU PHỐI TUẦN TỰ (Order: Crisis -> Injection -> Scope) ───
+        decision = route_message(query, stress_level=stress_level)
 
+        # ── 1.A: XỬ LÝ KHỦNG HOẢNG (CRISIS PATH - KHÔNG GỌI LLM TỰ DO) ────────
+        if decision.stage == STAGE_CRISIS:
+            tier = decision.crisis.tier
+
+            if tier == TIER_EXPLICIT:
+                # Kiểm tra xem đã có cảnh báo gần đây chưa
+                has_recent = await AdvancedRAGService._has_recent_crisis_flag(db, user_id, hours=settings.CRISIS_FLAG_DEDUP_HOURS)
+                if not has_recent:
+                    await AdvancedRAGService._flag_crisis_for_admin(db, user_id, tier=TIER_EXPLICIT)
+                    content = build_fixed_crisis_message()
+                else:
+                    # Tránh lặp lại nguyên văn tin nhắn dài vô tận
+                    content = build_crisis_followup(turn_index=1)
+
+                return {
+                    "content": content,
+                    "rag_sources": [],
+                    "crag_status": "CORRECT",
+                    "expanded_queries": [query],
+                    "intent": "CRISIS",
+                    "function_calls_made": [],
+                    "risk_assessment": {
+                        "level": "RED",
+                        "reasons": list(decision.crisis.signals) or ["Phát hiện tín hiệu khủng hoảng nghiêm trọng."],
+                        "trigger_emergency": True,
+                        "recommended_actions": [
+                            f"Liên hệ ngay Cấp cứu {settings.CRISIS_CONTACT_EMERGENCY} nếu nguy cấp.",
+                            f"Liên hệ người phụ trách: {settings.CRISIS_CONTACT_MENTOR}.",
+                            "Ở cạnh người thân hoặc bạn bè tin cậy."
+                        ]
+                    }
+                }
+
+            elif tier == TIER_AMBIGUOUS:
+                # Nhóm mơ hồ: Đặt câu hỏi trực diện, ân cần; KHÔNG cắm cờ admin
+                content = build_ambiguous_checkin(turn_index=0, third_party=decision.crisis.third_party)
+                return {
+                    "content": content,
+                    "rag_sources": [],
+                    "crag_status": "CORRECT",
+                    "expanded_queries": [query],
+                    "intent": "CRISIS_AMBIGUOUS",
+                    "function_calls_made": [],
+                    "risk_assessment": {
+                        "level": "YELLOW",
+                        "reasons": list(decision.crisis.signals) or ["Phát hiện trạng thái bế tắc hoặc lo âu cao."],
+                        "trigger_emergency": False,
+                        "recommended_actions": [
+                            "Hỏi thăm an toàn trực tiếp.",
+                            "Lắng nghe và khuyến khích chia sẻ thêm."
+                        ]
+                    }
+                }
+
+        # ── 1.B: XỬ LÝ INJECTION / JAILBREAK ──────────────────────────────────
+        if decision.stage == STAGE_INJECTION:
+            return {
+                "content": build_injection_refusal(),
+                "rag_sources": [],
+                "crag_status": "CORRECT",
+                "expanded_queries": [query],
+                "intent": "INJECTION_BLOCKED",
+                "function_calls_made": [],
+                "risk_assessment": {
+                    "level": "GREEN",
+                    "reasons": ["Yêu cầu vượt quyền hoặc can thiệp hệ thống bị từ chối."],
+                    "trigger_emergency": False,
+                    "recommended_actions": []
+                }
+            }
+
+        # ── 1.C: XỬ LÝ NGOÀI PHẠM VI (OFF-TOPIC) ──────────────────────────────
+        if decision.stage == STAGE_OFF_TOPIC:
+            category = decision.off_topic_category or "general"
+            return {
+                "content": build_off_topic_refusal(category),
+                "rag_sources": [],
+                "crag_status": "CORRECT",
+                "expanded_queries": [query],
+                "intent": "OFF_TOPIC",
+                "function_calls_made": [],
+                "risk_assessment": {
+                    "level": "GREEN",
+                    "reasons": [f"Yêu cầu thuộc nhóm ngoài phạm vi: {category}"],
+                    "trigger_emergency": False,
+                    "recommended_actions": []
+                }
+            }
+
+        # ─── BƯỚC 2: RAG RETRIEVAL & GROUNDING ────────────────────────────────
+        intent = decision.intent
         rag_sources = []
         context_texts = []
         crag_status = "CORRECT"
+        query_type = classify_query_type(query)
 
-        # 2. Xử lý theo Intent
-        if intent == "DOMAIN_QUERY":
-            # Chỉ truy vấn Vector DB khi là câu hỏi cẩm nang nghiệp vụ thực tế
+        if intent == INTENT_DOMAIN:
             expanded_queries = AdvancedRAGService.expand_query(query)
             all_chunks = []
             seen_chunk_texts = set()
@@ -119,8 +326,35 @@ class AdvancedRAGService:
                         all_chunks.append(res)
 
             all_chunks.sort(key=lambda x: x.get("similarity", 0.0), reverse=True)
-            # Ngưỡng lọc tin cậy: Chỉ lấy các đoạn có độ tương đồng >= 0.40
             top_chunks = [c for c in all_chunks if c.get("similarity", 0.0) >= 0.40][:top_k]
+
+            if not top_chunks:
+                crag_status = "NO_INFO"
+                # Ghi nhận chủ đề thiếu thông tin
+                await AdvancedRAGService._record_missing_topic(db, query)
+
+                # NẾU LÀ CÂU HỎI SỰ THẬT/QUY ĐỊNH (FACTUAL):
+                # Tuyệt đối không gọi LLM để tránh bịa số liệu/quy định.
+                if query_type == "factual":
+                    fixed_no_info = (
+                        f"Chào {user_name}! {NO_INFO_PREFIX}\n\n"
+                        "Về các quy định, nội quy hoặc chế độ cụ thể này, bạn vui lòng liên hệ trực tiếp "
+                        "với Anh/Chị Quản lý ca (Leader/Mentor) hoặc Phòng Nhân sự/Phòng Đào tạo của trường để có thông tin chính xác nhất.\n\n"
+                        "Nếu bạn đang gặp khó khăn hoặc lo lắng về ca làm, mình vẫn luôn ở đây để lắng nghe và hỗ trợ bạn nhé!"
+                    )
+                    return {
+                        "content": fixed_no_info,
+                        "rag_sources": [],
+                        "crag_status": "NO_INFO",
+                        "expanded_queries": expanded_queries,
+                        "intent": "NO_INFO_FALLBACK",
+                        "function_calls_made": [],
+                        "risk_assessment": AdvancedRAGService._evaluate_real_risk(
+                            stress_level=stress_level,
+                            recent_symptoms=recent_symptoms,
+                            default_reason="Câu hỏi sự thật nhưng cẩm nang chưa có tài liệu."
+                        )
+                    }
 
             for idx, item in enumerate(top_chunks, 1):
                 meta = item.get("metadata", {})
@@ -129,7 +363,14 @@ class AdvancedRAGService:
                 article_id = meta.get("article_id", "h0")
                 similarity = item.get("similarity", 0.0)
 
-                context_texts.append(f"[Nguồn {idx}: {title}]\nChủ đề: {category}\nNội dung: {item['chunk']}")
+                # Bọc chunk trong thẻ <document> an toàn đã escape closing tags
+                doc_block = wrap_document_chunk(
+                    chunk_index=idx,
+                    title=title,
+                    category=category,
+                    content=item['chunk']
+                )
+                context_texts.append(f"[Nguồn {idx}: {title}]\n{doc_block}")
                 rag_sources.append({
                     "article_id": article_id,
                     "title": title,
@@ -139,21 +380,27 @@ class AdvancedRAGService:
         else:
             expanded_queries = [query]
 
-        context_str = "\n\n".join(context_texts) if context_texts else "Không có trích dẫn cẩm nang cụ thể cho câu hỏi này."
+        context_str = "\n\n".join(context_texts) if context_texts else f"{NO_INFO_PREFIX}"
 
-        # 3. Xây dựng System Prompt thích ứng linh hoạt theo từng Intent
-        if intent == "GREETING":
+        # ─── BƯỚC 3: XÂY DỰNG SYSTEM PROMPT VỚI SAFETY POLICY ──────────────────
+        safety_block = safety_policy_block()
+
+        if intent == INTENT_GREETING:
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Đồng hành Tâm lý & Sức khỏe Thực tập tại LG Display.
-Nhiệm vụ: Chào hỏi bạn {user_name} một cách ấm áp, thân thiện (dùng emoji sinh động), giới thiệu ngắn gọn khả năng hỗ trợ (giải đáp ca kíp, đau mỏi ca đứng, cẩm nang 5S, bài tập thư giãn) và hỏi thăm tình hình hôm nay của bạn ấy."""
-        elif intent == "CLOSING":
+Nhiệm vụ: Chào hỏi bạn {user_name} một cách ấm áp, thân thiện (dùng emoji sinh động), giới thiệu ngắn gọn khả năng hỗ trợ (giải đáp ca kíp, đau mỏi ca đứng, cẩm nang 5S, bài tập thư giãn) và hỏi thăm tình hình hôm nay của bạn ấy.
+
+{safety_block}"""
+        elif intent == INTENT_CLOSING:
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Thực tập LG Display.
-Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca làm việc an toàn, nhiều năng lượng và nhắc bạn luôn có Enigma bên cạnh khi cần hỗ trợ."""
+Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca làm việc an toàn, nhiều năng lượng và nhắc bạn luôn có Enigma bên cạnh khi cần hỗ trợ.
+
+{safety_block}"""
         else:
             sleep_info = f"{sleep_hours}h" if sleep_hours is not None else "Chưa có dữ liệu (chưa rõ)"
             if sleep_hours is None:
-                sleep_instruction = f"5. DỮ LIỆU GIẤC NGỦ: Hiện tại hệ thống CHƯA CÓ dữ liệu giấc ngủ ca gần nhất của bạn {user_name} (chưa rõ). Tuyệt đối KHÔNG tự giả định bạn ấy đã ngủ đủ 7 tiếng. Nếu sinh viên nhắc đến mệt mỏi, uể oải, ca kíp hay sức khỏe, hãy ân cần hỏi thăm xem ca vừa rồi bạn ấy ngủ được khoảng mấy tiếng."
+                sleep_instruction = f"• DỮ LIỆU GIẤC NGỦ: Hiện tại hệ thống CHƯA CÓ dữ liệu giấc ngủ ca gần nhất của bạn {user_name} (chưa rõ). Tuyệt đối KHÔNG tự giả định bạn ấy đã ngủ đủ 7 tiếng. Nếu sinh viên nhắc đến mệt mỏi, uể oải, ca kíp hay sức khỏe, hãy ân cần hỏi thăm xem ca vừa rồi bạn ấy ngủ được khoảng mấy tiếng."
             else:
-                sleep_instruction = f"5. DỮ LIỆU GIẤC NGỦ: Ca gần nhất bạn {user_name} ngủ {sleep_hours}h. Hãy cân nhắc thông tin này khi tư vấn sức khỏe và phục hồi năng lượng."
+                sleep_instruction = f"• DỮ LIỆU GIẤC NGỦ: Ca gần nhất bạn {user_name} ngủ {sleep_hours}h. Hãy cân nhắc thông tin này khi tư vấn sức khỏe và phục hồi năng lượng."
 
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Đồng hành Tâm lý, Sức khỏe & Thích nghi Thực tập Doanh nghiệp tại LG Display.
 
@@ -164,6 +411,8 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
 4. Xưng hô thân thiện "mình - bạn" hoặc "Enigma - {user_name}".
 {sleep_instruction}
 
+{safety_block}
+
 👤 THÔNG TIN SINH VIÊN:
 - Tên: {user_name} | Chặng: {intern_phase} | Stress: {stress_level}/5 | Ngủ: {sleep_info} | Triệu chứng: {', '.join(recent_symptoms) if recent_symptoms else 'Bình thường'}
 
@@ -171,11 +420,14 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
 {context_str}
 """
 
-        # 4. Multi-Model Cascade Execution: Ưu tiên GROQ siêu tốc (<1s), dự phòng GEMINI (Failover Cascade)
+        # Bọc tin nhắn sinh viên trong XML tag để chống injection
+        wrapped_user_query = wrap_user_message(query)
+
+        # ─── BƯỚC 4: MULTI-MODEL CASCADE (GROQ -> GEMINI -> FALLBACK) ──────────
         ai_reply = ""
         llm_success = False
 
-        # --- TẦNG 1: Groq AI LPU (Tốc độ phản hồi cực nhanh ~0.5 - 1s) ---
+        # TẦNG 1: Groq AI LPU
         if settings.GROQ_API_KEY:
             for groq_model in GROQ_MODELS:
                 try:
@@ -190,7 +442,7 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                                 "model": groq_model,
                                 "messages": [
                                     {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": query}
+                                    {"role": "user", "content": wrapped_user_query}
                                 ],
                                 "temperature": 0.6,
                                 "max_tokens": 600,
@@ -202,21 +454,22 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                             if content and content.strip():
                                 ai_reply = content.strip()
                                 llm_success = True
-                                logger.info(f"[Dual-LLM] Đã phản hồi thành công qua Groq ({groq_model})")
+                                logger.info(f"[Dual-LLM] Đã phản hồi qua Groq ({groq_model})")
                                 break
                 except Exception as e:
-                    logger.warning(f"[Dual-LLM] Groq {groq_model} gặp lỗi ({e}), chuyển sang mô hình tiếp theo...")
+                    logger.warning(f"[Dual-LLM] Groq {groq_model} gặp lỗi ({e}), chuyển model tiếp theo...")
 
-        # --- TẦNG 2: Google Gemini (Dự phòng khi Groq bị rate limit hoặc mất kết nối) ---
+        # TẦNG 2: Google Gemini (Sử dụng system_instruction chính thức)
         if not llm_success and settings.GEMINI_API_KEY:
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            prompt_text = f"{system_prompt}\n\nCÂU HỎI CỦA SINH VIÊN:\n{query}"
-
             for model_name in GEMINI_MODELS:
                 try:
-                    model = genai.GenerativeModel(model_name)
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_prompt
+                    )
                     response = await asyncio.wait_for(
-                        asyncio.to_thread(model.generate_content, prompt_text),
+                        asyncio.to_thread(model.generate_content, wrapped_user_query),
                         timeout=5.0
                     )
                     if response and response.text and response.text.strip():
@@ -225,24 +478,37 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                         logger.info(f"[Dual-LLM] Đã phản hồi qua Gemini ({model_name})")
                         break
                 except Exception as e:
-                    logger.warning(f"[Dual-LLM] Gemini {model_name} không khả dụng ({e}), thử model tiếp theo...")
+                    logger.warning(f"[Dual-LLM] Gemini {model_name} không khả dụng ({e}), thử model tiếp...")
 
-        # --- TẦNG 3: Context-Aware Dynamic Fallback nếu cả 2 LLM ngoại tuyến ---
+        # TẦNG 3: Offline Dynamic Fallback
         if not llm_success:
+            risk_result = AIAgentService.evaluate_psychological_risk(
+                stress_level=stress_level,
+                sleep_hours=sleep_hours,
+                note_text=query,
+                physical_symptoms=recent_symptoms
+            )
             ai_reply = AdvancedRAGService._generate_dynamic_fallback(query, intent, rag_sources, user_name, risk_result)
 
+        # ─── BƯỚC 5: OUTPUT CHECK (KIỂM SOÁT ĐƠN THUỐC, CHẨN ĐOÁN & TRÍCH DẪN) ─
+        # Kiểm tra và làm sạch trích dẫn giả mạo (fake citations)
+        valid_indices = list(range(1, len(rag_sources) + 1))
+        validated_reply = validate_citations(ai_reply, valid_indices)
+
+        sanitized_reply, violation = check_output(validated_reply)
+
         return {
-            "content": ai_reply,
+            "content": sanitized_reply,
             "rag_sources": rag_sources,
             "crag_status": crag_status,
             "expanded_queries": expanded_queries,
             "intent": intent,
             "function_calls_made": [],
             "risk_assessment": {
-                "level": risk_result.level,
-                "reasons": risk_result.reasons,
-                "trigger_emergency": risk_result.trigger_emergency,
-                "recommended_actions": risk_result.recommended_actions
+                "level": "YELLOW" if stress_level >= 4 else "GREEN",
+                "reasons": ["Đã xử lý thông qua luồng RAG an toàn."],
+                "trigger_emergency": False,
+                "recommended_actions": []
             }
         }
 
@@ -259,23 +525,92 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
         db: Optional[Any] = None,
     ):
         """
-        Stream câu trả lời AI theo thời gian thực (Server-Sent Events / SSE).
-        Từng token được yield ngay lập tức khi mô hình sinh ra.
+        Stream câu trả lời AI theo Server-Sent Events (SSE).
+        Đảm bảo Crisis / Injection / Scope được chặn trước khi stream,
+        và sử dụng StreamingOutputGuard (sentence buffering) để phát hiện vi phạm y tế giữa chừng.
         """
-        # 1. Phân loại ý định & Đánh giá rủi ro
-        intent = AdvancedRAGService.classify_intent(query)
-        risk_result = AIAgentService.evaluate_psychological_risk(
-            stress_level=stress_level,
-            sleep_hours=sleep_hours,
-            note_text=query,
-            physical_symptoms=recent_symptoms
-        )
+        # ── 1. KIỂM TRA BẢO VỆ ĐẦU VÀO ──
+        decision = route_message(query, stress_level=stress_level)
 
+        if decision.stage == STAGE_CRISIS:
+            tier = decision.crisis.tier
+            if tier == TIER_EXPLICIT:
+                has_recent = await AdvancedRAGService._has_recent_crisis_flag(db, user_id, hours=settings.CRISIS_FLAG_DEDUP_HOURS)
+                if not has_recent:
+                    await AdvancedRAGService._flag_crisis_for_admin(db, user_id, tier=TIER_EXPLICIT)
+                    content = build_fixed_crisis_message()
+                else:
+                    content = build_crisis_followup(turn_index=1)
+
+                yield {
+                    "type": "metadata",
+                    "rag_sources": [],
+                    "crag_status": "CORRECT",
+                    "risk_assessment": {
+                        "level": "RED",
+                        "reasons": list(decision.crisis.signals) or ["Phát hiện tín hiệu khủng hoảng."],
+                        "trigger_emergency": True,
+                        "recommended_actions": [f"Liên hệ Cấp cứu {settings.CRISIS_CONTACT_EMERGENCY}."]
+                    }
+                }
+                for word in content.split(" "):
+                    yield {"type": "chunk", "delta": word + " "}
+                    await asyncio.sleep(0.015)
+                yield {"type": "done", "full_content": content}
+                return
+
+            elif tier == TIER_AMBIGUOUS:
+                content = build_ambiguous_checkin(turn_index=0, third_party=decision.crisis.third_party)
+                yield {
+                    "type": "metadata",
+                    "rag_sources": [],
+                    "crag_status": "CORRECT",
+                    "risk_assessment": {
+                        "level": "YELLOW",
+                        "reasons": list(decision.crisis.signals),
+                        "trigger_emergency": False,
+                        "recommended_actions": []
+                    }
+                }
+                for word in content.split(" "):
+                    yield {"type": "chunk", "delta": word + " "}
+                    await asyncio.sleep(0.015)
+                yield {"type": "done", "full_content": content}
+                return
+
+        if decision.stage == STAGE_INJECTION:
+            content = build_injection_refusal()
+            yield {
+                "type": "metadata",
+                "rag_sources": [],
+                "crag_status": "CORRECT",
+                "risk_assessment": {"level": "GREEN", "reasons": ["Bảo vệ injection."], "trigger_emergency": False, "recommended_actions": []}
+            }
+            yield {"type": "chunk", "delta": content}
+            yield {"type": "done", "full_content": content}
+            return
+
+        if decision.stage == STAGE_OFF_TOPIC:
+            category = decision.off_topic_category or "general"
+            content = build_off_topic_refusal(category)
+            yield {
+                "type": "metadata",
+                "rag_sources": [],
+                "crag_status": "CORRECT",
+                "risk_assessment": {"level": "GREEN", "reasons": [f"Ngoài phạm vi: {category}"], "trigger_emergency": False, "recommended_actions": []}
+            }
+            yield {"type": "chunk", "delta": content}
+            yield {"type": "done", "full_content": content}
+            return
+
+        # ── 2. RAG RETRIEVAL & GROUNDING ──
+        intent = decision.intent
         rag_sources = []
         context_texts = []
         crag_status = "CORRECT"
+        query_type = classify_query_type(query)
 
-        if intent == "DOMAIN_QUERY":
+        if intent == INTENT_DOMAIN:
             expanded_queries = AdvancedRAGService.expand_query(query)
             all_chunks = []
             seen_chunk_texts = set()
@@ -291,6 +626,33 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
             all_chunks.sort(key=lambda x: x.get("similarity", 0.0), reverse=True)
             top_chunks = [c for c in all_chunks if c.get("similarity", 0.0) >= 0.40][:top_k]
 
+            if not top_chunks:
+                crag_status = "NO_INFO"
+                await AdvancedRAGService._record_missing_topic(db, query)
+
+                if query_type == "factual":
+                    fixed_no_info = (
+                        f"Chào {user_name}! {NO_INFO_PREFIX}\n\n"
+                        "Về các quy định, nội quy hoặc chế độ cụ thể này, bạn vui lòng liên hệ trực tiếp "
+                        "với Anh/Chị Quản lý ca (Leader/Mentor) hoặc Phòng Nhân sự/Phòng Đào tạo của trường để có thông tin chính xác nhất.\n\n"
+                        "Nếu bạn đang gặp khó khăn hoặc lo lắng về ca làm, mình vẫn luôn ở đây để lắng nghe và hỗ trợ bạn nhé!"
+                    )
+                    yield {
+                        "type": "metadata",
+                        "rag_sources": [],
+                        "crag_status": "NO_INFO",
+                        "risk_assessment": AdvancedRAGService._evaluate_real_risk(
+                            stress_level=stress_level,
+                            recent_symptoms=recent_symptoms,
+                            default_reason="Câu hỏi sự thật nhưng cẩm nang chưa có tài liệu."
+                        )
+                    }
+                    for word in fixed_no_info.split(" "):
+                        yield {"type": "chunk", "delta": word + " "}
+                        await asyncio.sleep(0.015)
+                    yield {"type": "done", "full_content": fixed_no_info}
+                    return
+
             for idx, item in enumerate(top_chunks, 1):
                 meta = item.get("metadata", {})
                 title = meta.get("title", "Cẩm nang thực tập")
@@ -298,7 +660,13 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                 article_id = meta.get("article_id", "h0")
                 similarity = item.get("similarity", 0.0)
 
-                context_texts.append(f"[Nguồn {idx}: {title}]\nChủ đề: {category}\nNội dung: {item['chunk']}")
+                doc_block = wrap_document_chunk(
+                    chunk_index=idx,
+                    title=title,
+                    category=category,
+                    content=item['chunk']
+                )
+                context_texts.append(f"[Nguồn {idx}: {title}]\n{doc_block}")
                 rag_sources.append({
                     "article_id": article_id,
                     "title": title,
@@ -306,54 +674,54 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                     "similarity_score": similarity
                 })
 
-        context_str = "\n\n".join(context_texts) if context_texts else "Không có trích dẫn cẩm nang cụ thể cho câu hỏi này."
+        context_str = "\n\n".join(context_texts) if context_texts else f"{NO_INFO_PREFIX}"
+        safety_block = safety_policy_block()
 
-        if intent == "GREETING":
+        if intent == INTENT_GREETING:
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Đồng hành Tâm lý & Sức khỏe Thực tập tại LG Display.
-Nhiệm vụ: Chào hỏi bạn {user_name} một cách ấm áp, thân thiện (dùng emoji sinh động), giới thiệu ngắn gọn khả năng hỗ trợ (giải đáp ca kíp, đau mỏi ca đứng, cẩm nang 5S, bài tập thư giãn) và hỏi thăm tình hình hôm nay của bạn ấy."""
-        elif intent == "CLOSING":
+Nhiệm vụ: Chào hỏi bạn {user_name} ấm áp, giới thiệu hỗ trợ.
+{safety_block}"""
+        elif intent == INTENT_CLOSING:
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Thực tập LG Display.
-Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca làm việc an toàn, nhiều năng lượng và nhắc bạn luôn có Enigma bên cạnh khi cần hỗ trợ."""
+Nhiệm vụ: Cảm ơn bạn {user_name}, chúc ca làm an toàn.
+{safety_block}"""
         else:
             sleep_info = f"{sleep_hours}h" if sleep_hours is not None else "Chưa có dữ liệu (chưa rõ)"
-            if sleep_hours is None:
-                sleep_instruction = f"5. DỮ LIỆU GIẤC NGỦ: Hiện tại hệ thống CHƯA CÓ dữ liệu giấc ngủ ca gần nhất của bạn {user_name} (chưa rõ). Tuyệt đối KHÔNG tự giả định bạn ấy đã ngủ đủ 7 tiếng. Nếu sinh viên nhắc đến mệt mỏi, uể oải, ca kíp hay sức khỏe, hãy ân cần hỏi thăm xem ca vừa rồi bạn ấy ngủ được khoảng mấy tiếng."
-            else:
-                sleep_instruction = f"5. DỮ LIỆU GIẤC NGỦ: Ca gần nhất bạn {user_name} ngủ {sleep_hours}h. Hãy cân nhắc thông tin này khi tư vấn sức khỏe và phục hồi năng lượng."
-
             system_prompt = f"""Bạn là Enigma AI — Trợ lý Đồng hành Tâm lý, Sức khỏe & Thích nghi Thực tập Doanh nghiệp tại LG Display.
 
-🎯 NGUYÊN TẮC PHẢN HỒI:
-1. Thấu cảm & Trả lời TRỰC TIẾP, ĐÚNG TRỌNG TÂM câu hỏi của bạn {user_name}.
-2. Nếu có cẩm nang liên quan bên dưới, hãy trích dẫn rõ [Nguồn X: Tên bài viết] và ứng dụng vào câu trả lời.
-3. Đưa ra 2-3 lời khuyên hành động thực tế, khoa học và dễ làm theo.
-4. Xưng hô thân thiện "mình - bạn" hoặc "Enigma - {user_name}".
-{sleep_instruction}
+🎯 NGUYÊN TẮC:
+1. Thấu cảm & Trả lời trực tiếp đúng trọng tâm câu hỏi của {user_name}.
+2. Nếu có cẩm nang, trích dẫn rõ [Nguồn X: Tên bài viết].
+3. Đưa ra 2-3 lời khuyên hành động thực tế.
+
+{safety_block}
 
 👤 THÔNG TIN SINH VIÊN:
-- Tên: {user_name} | Chặng: {intern_phase} | Stress: {stress_level}/5 | Ngủ: {sleep_info} | Triệu chứng: {', '.join(recent_symptoms) if recent_symptoms else 'Bình thường'}
+- Tên: {user_name} | Chặng: {intern_phase} | Stress: {stress_level}/5 | Ngủ: {sleep_info}
 
-📚 CẨM NANG LIÊN QUAN (RAG CONTEXT):
+📚 CẨM NANG LIÊN QUAN:
 {context_str}
 """
 
-        # Yield metadata đầu tiên: rag_sources & risk_assessment
+        wrapped_user_query = wrap_user_message(query)
+
         yield {
             "type": "metadata",
             "rag_sources": rag_sources,
             "crag_status": crag_status,
             "risk_assessment": {
-                "level": risk_result.level,
-                "reasons": risk_result.reasons,
-                "trigger_emergency": risk_result.trigger_emergency,
-                "recommended_actions": risk_result.recommended_actions
+                "level": "YELLOW" if stress_level >= 4 else "GREEN",
+                "reasons": ["Đang sinh nội dung qua bộ đệm an toàn."],
+                "trigger_emergency": False,
+                "recommended_actions": []
             }
         }
 
+        guard = StreamingOutputGuard()
         full_text = ""
         llm_stream_success = False
 
-        # --- TẦNG 1: Stream qua Groq AI LPU (Siêu tốc ~500 tokens/s) ---
+        # --- STREAM TẦNG 1: Groq ---
         if settings.GROQ_API_KEY:
             for groq_model in GROQ_MODELS:
                 try:
@@ -369,7 +737,7 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                                 "model": groq_model,
                                 "messages": [
                                     {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": query}
+                                    {"role": "user", "content": wrapped_user_query}
                                 ],
                                 "temperature": 0.6,
                                 "max_tokens": 600,
@@ -384,58 +752,74 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                                         chunk_json = json_lib.loads(line_str[6:])
                                         delta_text = chunk_json["choices"][0]["delta"].get("content", "")
                                         if delta_text:
-                                            full_text += delta_text
-                                            yield {
-                                                "type": "chunk",
-                                                "delta": delta_text
-                                            }
+                                            released_sentences = guard.feed(delta_text)
+                                            for s in released_sentences:
+                                                full_text += s
+                                                yield {"type": "chunk", "delta": s}
+                                            if guard.blocked:
+                                                break
+                                for s in guard.flush():
+                                    full_text += s
+                                    yield {"type": "chunk", "delta": s}
+
                                 if full_text.strip():
                                     llm_stream_success = True
-                                    logger.info(f"[Dual-LLM Stream] Stream hoàn tất từ Groq ({groq_model})")
                                     break
                 except Exception as e:
-                    logger.warning(f"[Dual-LLM Stream] Groq {groq_model} stream lỗi ({e}), chuyển sang mô hình tiếp theo...")
+                    logger.warning(f"[Dual-LLM Stream] Groq {groq_model} lỗi ({e}), chuyển model tiếp...")
 
-        # --- TẦNG 2: Stream dự phòng qua Google Gemini ---
+        # --- STREAM TẦNG 2: Gemini ---
         if not llm_stream_success and settings.GEMINI_API_KEY:
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            prompt_text = f"{system_prompt}\n\nCÂU HỎI CỦA SINH VIÊN:\n{query}"
-
             for model_name in GEMINI_MODELS:
                 try:
-                    model = genai.GenerativeModel(model_name)
-                    response = await asyncio.to_thread(model.generate_content, prompt_text, stream=True)
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_prompt
+                    )
+                    response = await asyncio.to_thread(model.generate_content, wrapped_user_query, stream=True)
                     for chunk in response:
                         if chunk.text:
-                            full_text += chunk.text
-                            yield {
-                                "type": "chunk",
-                                "delta": chunk.text
-                            }
+                            released_sentences = guard.feed(chunk.text)
+                            for s in released_sentences:
+                                full_text += s
+                                yield {"type": "chunk", "delta": s}
+                            if guard.blocked:
+                                break
+                    for s in guard.flush():
+                        full_text += s
+                        yield {"type": "chunk", "delta": s}
+
                     if full_text.strip():
                         llm_stream_success = True
-                        logger.info(f"[Dual-LLM Stream] Stream hoàn tất từ Gemini ({model_name})")
                         break
                 except Exception as e:
-                    logger.warning(f"[Dual-LLM Stream] Gemini {model_name} không khả dụng ({e}), thử model tiếp theo...")
+                    logger.warning(f"[Dual-LLM Stream] Gemini {model_name} không khả dụng ({e})...")
 
-        # --- TẦNG 3: Context-Aware Dynamic Fallback ---
+        # --- TẦNG 3: Offline Fallback ---
         if not llm_stream_success:
+            risk_result = AIAgentService.evaluate_psychological_risk(
+                stress_level=stress_level,
+                sleep_hours=sleep_hours,
+                note_text=query,
+                physical_symptoms=recent_symptoms
+            )
             fallback = AdvancedRAGService._generate_dynamic_fallback(query, intent, rag_sources, user_name, risk_result)
-            full_text = fallback
-            words = fallback.split(" ")
+            sanitized_fallback, _ = check_output(fallback)
+            full_text = sanitized_fallback
+            words = sanitized_fallback.split(" ")
             chunk_size = 3
             for i in range(0, len(words), chunk_size):
                 sub = " ".join(words[i:i+chunk_size]) + " "
-                yield {
-                    "type": "chunk",
-                    "delta": sub
-                }
-                await asyncio.sleep(0.03)
+                yield {"type": "chunk", "delta": sub}
+                await asyncio.sleep(0.02)
+
+        valid_indices = list(range(1, len(rag_sources) + 1))
+        final_validated_content = validate_citations(full_text.strip(), valid_indices)
 
         yield {
             "type": "done",
-            "full_content": full_text.strip()
+            "full_content": final_validated_content
         }
 
     @staticmethod
@@ -446,17 +830,17 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
         user_name: str,
         risk_result: RiskAssessmentResult
     ) -> str:
-        """Sinh câu trả lời thông minh dựa trên ngữ cảnh khi ngoại tuyến."""
+        """Sinh câu trả lời thông minh an toàn khi ngoại tuyến."""
         clean_q = query.lower().strip()
 
-        if intent == "GREETING":
+        if intent == INTENT_GREETING:
             return (
                 f"Chào {user_name}! 🤖 Mình là Enigma AI — Trợ lý Đồng hành Tâm lý & Sức khỏe Thực tập tại LG Display.\n\n"
                 f"Mình luôn sẵn sàng giải đáp thắc mắc về nhịp ca kíp, an toàn nhà máy 5S, kinh nghiệm ở KTX và hướng dẫn các bài tập phục hồi thể chất sau ca làm.\n\n"
                 f"Hôm nay bạn cảm thấy thế nào? Hãy chia sẻ cùng mình nhé! ✨"
             )
 
-        if intent == "CLOSING":
+        if intent == INTENT_CLOSING:
             return f"Không có gì đâu nè {user_name}! 😊 Chúc bạn có một ngày thực tập thật nhiều năng lượng và an toàn. Bất cứ khi nào cần chia sẻ hay hỗ trợ, hãy nhắn cho Enigma nhé!"
 
         if any(w in clean_q for w in ["đau chân", "giày", "esd", "mỏi chân", "gót chân"]):
@@ -473,7 +857,7 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
             return (
                 f"Chào {user_name}! Đổi ca làm việc từ ca ngày sang ca đêm dễ gây rối loạn nhịp sinh học.\n\n"
                 f"💡 **Bí quyết ngủ ngon sau ca đêm:**\n"
-                f"1. **Đeo kính râm khi tan ca về**: Hạn chế ánh sáng mặt trời làm ức chế hormone Melatonin.\n"
+                f"1. **Đeo kính râm khi tan ca về**: Hạn chế ánh sáng mặt trời làm ức chế hormone Melatonin tự nhiên.\n"
                 f"2. **Phòng ngủ tối & mát (22-24°C)**: Kéo rèm kín và dùng bịt mắt chống ồn.\n"
                 f"3. **Tránh caffeine trước khi hết ca 4 tiếng**: Không uống cà phê/bò húc sát giờ về phòng.\n"
                 f"4. **Tắt màn hình 30 phút trước khi ngủ**: Giúp não bộ thả lỏng và dễ đi vào giấc ngủ sâu."
@@ -489,29 +873,13 @@ Nhiệm vụ: Cảm ơn bạn {user_name}, gửi lời chúc bạn có một ca 
                 f"- **Bước 4**: Nín thở nghỉ trong **4 giây** trước khi lặp lại chu kỳ tiếp theo."
             )
 
-        if any(w in clean_q for w in ["phq", "phq4", "phq-4", "sàng lọc", "tâm thần", "trầm cảm", "lo âu"]):
-            return (
-                f"Chào {user_name}! Hệ thống Enigma tích hợp bộ sàng lọc sức khỏe tâm thần chuẩn y khoa **PHQ-4** (Patient Health Questionnaire-4) theo nghiên cứu của Đại học Columbia và Viện Y tế Quốc gia Hoa Kỳ (PMC8038412).\n\n"
-                f"📋 **Bộ câu hỏi gồm 4 mục (thời gian làm < 1 phút):**\n"
-                f"1. Ít hứng thú hoặc niềm vui trong công việc / học tập (PHQ-2)\n"
-                f"2. Cảm thấy buồn rầu, chán nản hoặc tuyệt vọng (PHQ-2)\n"
-                f"3. Cảm thấy lo lắng, bồn chồn hoặc căng thẳng (GAD-2)\n"
-                f"4. Không thể kiểm soát sự lo lắng (GAD-2)\n\n"
-                f"🎯 **Phân tầng can thiệp:**\n"
-                f"- **0 - 2 điểm**: Bình thường (Tâm lý ổn định)\n"
-                f"- **3 - 5 điểm**: Lo âu / trầm cảm nhẹ (Áp dụng Box Breathing & nghỉ ngơi)\n"
-                f"- **6 - 8 điểm**: Mức độ vừa (Cần giảm OT, trao đổi cố vấn)\n"
-                f"- **9 - 12 điểm**: Nguy cơ cao (Kích hoạt cảnh báo & liên hệ Hotline 111)\n\n"
-                f"Bạn có thể mở tính năng **Sàng lọc PHQ-4** trên ứng dụng để kiểm tra nhanh nhé!"
-            )
-
         # Nếu có nguồn cẩm nang được tìm thấy
         if rag_sources:
             top = rag_sources[0]
             return (
-                f"Chào {user_name}! Về thắc mắc của bạn, Cẩm nang thực tập [{top['title']}] có hướng dẫn như sau:\n\n"
+                f"Chào {user_name}! Về thắc mắc của bạn, Cẩm nang thực tập [{top['title']}] có hướng dẫn liên quan.\n\n"
                 f"💡 Hãy áp dụng các quy chuẩn an toàn và trao đổi với Trưởng ca (Leader) nếu cần hướng dẫn trực tiếp.\n"
-                f"Bạn có thể hỏi thêm Enigma về các bài tập thư giãn cơ hoặc chế độ dinh dưỡng ca kíp nhé!"
+                f"Bạn có thể hỏi thêm Enigma về các bài tập thư giãn cơ hoặc chế độ sinh hoạt ca kíp nhé!"
             )
 
         return (

@@ -37,6 +37,7 @@ class User(Base):
     avatar_url    = Column(Text, nullable=True)
     fcm_token     = Column(Text, nullable=True)
     is_active     = Column(Boolean, nullable=False, default=True)
+    allow_training_use = Column(Boolean, nullable=False, default=False)
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_login_at = Column(DateTime(timezone=True), nullable=True)

@@ -1,3 +1,4 @@
+from app.services.ai_guardrails import sanitize_document_text
 import os
 import pathlib
 import chromadb
@@ -38,8 +39,13 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str
 class VectorStoreService:
     @staticmethod
     def add_or_update_article(article_id: str, title: str, content: str, category: str):
-        """Index an article into ChromaDB HNSW collection."""
-        chunks = chunk_text(content, chunk_size=500, overlap=100)
+        """Index an article into ChromaDB HNSW collection with instruction-sanitizing."""
+        # Sanitize instruction-like patterns to prevent indirect prompt injection
+        clean_content = sanitize_document_text(content)
+        clean_title = sanitize_document_text(title)
+        clean_category = sanitize_document_text(category)
+
+        chunks = chunk_text(clean_content, chunk_size=500, overlap=100)
         if not chunks:
             chunks = [title]
 
@@ -47,8 +53,8 @@ class VectorStoreService:
         metadatas = [
             {
                 "article_id": str(article_id),
-                "title": title,
-                "category": category,
+                "title": clean_title,
+                "category": clean_category,
                 "chunk_index": i,
             }
             for i in range(len(chunks))
@@ -199,3 +205,25 @@ Kinh nghiệm xử lý từ khóa trước:
                 category=item["category"]
             )
         print(f"ChromaDB seeded successfully with {len(seed_articles)} handbook articles!")
+
+    @staticmethod
+    async def sync_all_published_articles_from_db(db) -> int:
+        """
+        Re-index ALL published handbook articles from PostgreSQL into ChromaDB.
+        Ensures that ephemeral storage restarts (like deploys on Render) do not lose
+        articles created or edited via the admin dashboard.
+        """
+        from sqlalchemy import select
+        from app.db.models.handbook_article import HandbookArticle, ArticleStatus
+
+        stmt = select(HandbookArticle).where(HandbookArticle.status == ArticleStatus.published)
+        res = await db.execute(stmt)
+        articles = res.scalars().all()
+        for art in articles:
+            VectorStoreService.add_or_update_article(
+                article_id=str(art.id),
+                title=art.title,
+                content=art.content,
+                category=art.category
+            )
+        return len(articles)

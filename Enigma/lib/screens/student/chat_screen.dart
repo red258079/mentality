@@ -65,6 +65,24 @@ class ChatScreenState extends State<ChatScreen> {
 
   void startTour({bool force = false}) => _startTour(force: force);
 
+  /// Prefills the chat input with [text] without auto-sending so the user
+  /// can review or edit the question before pressing send.
+  void askAbout(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    _controller.value = TextEditingValue(
+      text: trimmed,
+      selection: TextSelection.collapsed(offset: trimmed.length),
+    );
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusNode.requestFocus();
+        }
+      });
+    }
+  }
+
   void _startTour({bool force = false}) {
     FeatureTour.start(
       context,
@@ -755,6 +773,32 @@ class ChatScreenState extends State<ChatScreen> {
         ),
         body: Column(
           children: [
+            // Student Safety Consent Notice
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceAltColor(context).withOpacity(0.5),
+                border: Border(bottom: BorderSide(color: AppTheme.borderColor(context).withOpacity(0.5))),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.shield_outlined, size: 13, color: AppTheme.onSurfaceMuted(context)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Bảo mật & Quyền riêng tư: Lịch sử trò chuyện được lưu tối đa 90 ngày để duy trì ngữ cảnh hỗ trợ và bạn có thể xóa bất cứ lúc nào. Trong tình huống nguy cấp hoặc có nguy cơ làm hại bản thân, hệ thống có thể thông báo người phụ trách để kịp thời hỗ trợ.',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: AppTheme.onSurfaceMuted(context),
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             // Emergency / High Risk Banner
             if (_riskWarning != null) ...[
               Container(

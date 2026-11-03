@@ -1,13 +1,25 @@
 import 'package:flutter/material.dart';
 import '../../models/handbook_article.dart';
+import '../../navigation/student_nav.dart';
 import '../../theme/app_theme.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-// import 'chat_screen.dart'; // TODO: Implement Chat Screen
 
 class HandbookDetailScreen extends StatelessWidget {
   final HandbookArticle article;
 
   const HandbookDetailScreen({super.key, required this.article});
+
+  String _buildPrefilledQuestion() {
+    final singleLine = article.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    const maxSummaryLen = 120;
+    final shortSummary = singleLine.length > maxSummaryLen
+        ? '${singleLine.substring(0, maxSummaryLen).trimRight()}...'
+        : singleLine;
+    if (shortSummary.isEmpty) {
+      return 'Cho mình hỏi thêm về bài viết "${article.title}": ';
+    }
+    return 'Cho mình hỏi thêm về bài viết "${article.title}" ($shortSummary): ';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +115,10 @@ class HandbookDetailScreen extends StatelessWidget {
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      // Navigate to Chat Screen
+                      final navState = StudentNav.of(context);
+                      final question = _buildPrefilledQuestion();
+                      Navigator.of(context).pop();
+                      navState?.askAboutInChat(question);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primary,

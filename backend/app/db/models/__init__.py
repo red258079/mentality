@@ -10,6 +10,8 @@ from app.db.models.task import Task, UserTaskProgress, PillarType
 from app.db.models.notification_log import NotificationLog, NotificationType
 from app.db.models.feature_onboarding import UserFeatureOnboarding
 from app.db.models.catalog import University, Company
+from app.db.models.crisis_flag import CrisisFlag, CrisisFlagTier, CrisisFlagStatus
+from app.db.models.handbook_missing_topic import HandbookMissingTopic
 
 __all__ = [
     "Base",
@@ -33,4 +35,8 @@ __all__ = [
     "NotificationLog",
     "NotificationType",
     "UserFeatureOnboarding",
+    "CrisisFlag",
+    "CrisisFlagTier",
+    "CrisisFlagStatus",
+    "HandbookMissingTopic",
 ]

@@ -128,7 +128,7 @@ MEDICAL_GUIDELINES_KB: Dict[str, Dict[str, Any]] = {
             "1. Phoi nang 15-20 phut vao buoi sang de reset dong ho sinh hoc.",
             "2. An uong theo lich co dinh, tranh an khuya sau 22h.",
             "3. Tranh ngu trua qua 20 phut de khong anh huong giac ngu dem.",
-            "4. Dung melatonin lieu thap (0.5-1mg) sau khi tham khao bac si.",
+            "4. Dung melatonin lieu thap sau khi tham khao bac si.",
         ],
         "hotline": None,
         "severity_threshold": "mild"

@@ -108,6 +108,16 @@
           <span class="badge badge-warning" id="nav-badge-pending" style="display: none;">0</span>
         </button>
 
+                <button class="nav-item highlight-danger" data-tab="crisis" title="Cảnh Báo Khủng Hoảng (AI Chat)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span>Khủng Hoảng AI</span>
+          <span class="badge badge-danger pulse-dot" id="nav-badge-crisis" style="display:none;">0</span>
+        </button>
+
         <button class="nav-item highlight-danger" data-tab="burnout" title="Cảnh Báo Kiệt Sức">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -673,6 +683,47 @@
           </table>
         </div>
 
+      </section>
+
+      <!-- TAB 2.5: CRISIS FLAGS (AI CHAT) -->
+      <section class="tab-pane" id="pane-crisis">
+        <div class="alert-banner" style="background: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444;">
+          <div class="alert-banner-icon" style="color: #ef4444;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div class="alert-banner-content">
+            <h4 style="color: #ef4444;">Trung Tâm Cảnh Báo Khủng Hoảng (Crisis Guardrail AI)</h4>
+            <p>Hệ thống tự động cắm cờ khi sinh viên bộc lộ nguy cơ tự hại hoặc khủng hoảng nghiêm trọng trong AI Chat. Để bảo vệ quyền riêng tư sinh viên, <strong>tuyệt đối không lưu và không hiển thị nội dung tin nhắn chat</strong>. Người quản trị hãy nhanh chóng liên hệ theo hotline hoặc thông tin sinh viên bên dưới.</p>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-card-header">
+            <h3>Danh Sách Cảnh Báo Khủng Hoảng Cần Theo Dõi</h3>
+            <button class="btn btn-sm btn-secondary" id="btn-refresh-crisis" onclick="window.EnigmaApp.refreshCrisisFlags()">🔄 Làm Mới</button>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Thời Gian</th>
+                  <th>Sinh Viên</th>
+                  <th>Mức Độ</th>
+                  <th>Trạng Thái</th>
+                  <th>Ghi Chú Xử Lý</th>
+                  <th>Hành Động</th>
+                </tr>
+              </thead>
+              <tbody id="crisis-flags-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <!-- TAB 3: BURNOUT ALERT CENTER -->

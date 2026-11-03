@@ -223,3 +223,20 @@ async def rate_message_feedback(
     msg.feedback = 1 if payload.feedback > 0 else -1
     await db.commit()
     return {"message_id": str(message_id), "feedback": msg.feedback, "status": "recorded"}
+
+
+@router.delete("/history/me", summary="Xóa toàn bộ lịch sử trò chuyện của tôi (Quyền riêng tư)")
+async def delete_my_chat_history(
+    user=Depends(get_authed_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Quyền riêng tư (Privacy): Cho phép sinh viên xóa sạch toàn bộ lịch sử chat của mình.
+    user_id được lấy DUY NHẤT từ token xác thực của người gọi.
+    """
+    deleted_count = await ChatService.delete_user_entire_chat_history(db, user.id)
+    return {
+        "status": "deleted",
+        "message": f"Đã xóa toàn bộ lịch sử trò chuyện ({deleted_count} tin nhắn).",
+        "deleted_messages": deleted_count
+    }

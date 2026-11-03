@@ -1,8 +1,9 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, users, checkins, journals, tasks, chat, handbook, admin, life_logs, notifications, workplace, catalog
+from app.api.routes import auth, users, checkins, journals, tasks, chat, handbook, admin, life_logs, notifications, workplace, catalog, crisis_flags
 from app.api.routes.admin import get_authed_admin
 from app.db.database import create_tables
 from app.core.config import settings
@@ -58,7 +59,59 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] Seed handbook postgres: {e}")
         
-    yield
+    # Re-index toàn bộ bài viết cẩm nang đã xuất bản từ PostgreSQL vào ChromaDB dưới dạng background task
+    # (Chạy bất đồng bộ trong background sau khi khởi động, KHÔNG làm block lifespan trước yield)
+    async def _background_reindex_handbook():
+        try:
+            from app.services.vector_store_service import VectorStoreService
+            from app.db.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                count = await VectorStoreService.sync_all_published_articles_from_db(session)
+                print(f"[OK] [Background] Da dong bo va re-index {count} bai viet published tu PostgreSQL vao ChromaDB!")
+        except Exception as e:
+            print(f"[WARN] [Background] Dong bo handbook vao ChromaDB: {e}")
+
+    reindex_task = asyncio.create_task(_background_reindex_handbook())
+
+    # Chạy dọn dẹp các tin nhắn chat cũ quá hạn lưu trữ khi khởi động hệ thống
+    try:
+        from app.db.database import AsyncSessionLocal
+        from app.services.chat_service import ChatService
+        async with AsyncSessionLocal() as session:
+            cleaned = await ChatService.cleanup_expired_chat_history(session)
+            if cleaned > 0:
+                print(f"[RETENTION] Da don dep {cleaned} tin nhan chat het han luu tru.")
+    except Exception as e:
+        print(f"[WARN] Don dep chat history luc khoi dong: {e}")
+
+    # Scheduled background task định kỳ dọn dẹp chat history (chạy mỗi 24 giờ)
+    async def _periodic_retention_cleanup():
+        while True:
+            try:
+                await asyncio.sleep(86400)
+                from app.db.database import AsyncSessionLocal
+                from app.services.chat_service import ChatService
+                async with AsyncSessionLocal() as session:
+                    c = await ChatService.cleanup_expired_chat_history(session)
+                    if c > 0:
+                        print(f"[RETENTION] Dinh ky da don dep {c} tin nhan chat het han.")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[WARN] Dinh ky don dep chat history: {e}")
+
+    cleanup_task = asyncio.create_task(_periodic_retention_cleanup())
+
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        reindex_task.cancel()
+        for t in (cleanup_task, reindex_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
@@ -88,6 +141,7 @@ app.include_router(notifications.router, prefix="/notifications", tags=["Notific
 app.include_router(workplace.router,     prefix="/workplace",     tags=["Workplace & Geofence"])
 app.include_router(catalog.router,       prefix="/catalog",       tags=["Catalog"])
 app.include_router(admin.router,         prefix="/admin",         tags=["Admin"], dependencies=[Depends(get_authed_admin)])
+app.include_router(crisis_flags.router,  prefix="/admin",         tags=["Crisis Flags"], dependencies=[Depends(get_authed_admin)])
 
 # Root-level convenience alias for user profile catalog update
 from app.schemas.catalog import ProfileCatalogUpdateResponse

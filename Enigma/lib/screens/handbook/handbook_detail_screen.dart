@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../models/handbook_model.dart';
+import '../../navigation/student_nav.dart';
 import '../chat/ai_chat_screen.dart';
 
 class HandbookDetailScreen extends StatelessWidget {
   final HandbookArticle article;
 
   const HandbookDetailScreen({super.key, required this.article});
+
+  String _buildPrefilledQuestion() {
+    final shortSummary = article.summary.trim();
+    if (shortSummary.isEmpty) {
+      return 'Cho mình hỏi thêm về bài viết "${article.title}": ';
+    }
+    return 'Cho mình hỏi thêm về bài viết "${article.title}" ($shortSummary): ';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -132,14 +141,21 @@ class HandbookDetailScreen extends StatelessWidget {
                       width: double.infinity,
                       child: ElevatedButton.icon(
                         onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => AiChatScreen(
-                                initialPrompt: 'Tư vấn thêm cho tôi về: ${article.title}',
+                          final question = _buildPrefilledQuestion();
+                          final navState = StudentNav.of(context);
+                          if (navState != null) {
+                            Navigator.of(context).pop();
+                            navState.askAboutInChat(question);
+                          } else {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AiChatScreen(
+                                  initialPrompt: question,
+                                ),
                               ),
-                            ),
-                          );
+                            );
+                          }
                         },
                         icon: const Icon(Icons.smart_toy_outlined, size: 18),
                         label: const Text('Hỏi Trợ lý AI về bài viết này'),

@@ -132,3 +132,59 @@ class ChatService:
             "rag_sources": rag_res["rag_sources"],
             "risk_assessment": rag_res["risk_assessment"]
         }
+
+
+    @staticmethod
+    async def cleanup_expired_chat_history(db: AsyncSession, retention_days: Optional[int] = None) -> int:
+        """
+        Dọn dẹp lịch sử trò chuyện đã hết hạn (mặc định quá CHAT_RETENTION_DAYS ngày).
+        Xóa tin nhắn (ChatMessage) và các phiên (ChatSession) cũ.
+        Không chạy trên từng request; được gọi qua startup task hoặc scheduled admin endpoint.
+        """
+        from datetime import datetime, timezone, timedelta
+        from app.core.config import settings
+        from sqlalchemy import delete
+        from app.db.models.chat import ChatSession, ChatMessage
+
+        days = retention_days if retention_days is not None else settings.CHAT_RETENTION_DAYS
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        # Xóa các tin nhắn quá hạn
+        stmt_msg = delete(ChatMessage).where(ChatMessage.created_at < cutoff)
+        res_msg = await db.execute(stmt_msg)
+        deleted_count = res_msg.rowcount or 0
+
+        # Xóa các phiên rỗng hoặc quá hạn cập nhật
+        stmt_sess = delete(ChatSession).where(ChatSession.updated_at < cutoff)
+        await db.execute(stmt_sess)
+
+        await db.commit()
+        return deleted_count
+
+    @staticmethod
+    async def delete_user_entire_chat_history(db: AsyncSession, user_id) -> int:
+        """
+        Quyền riêng tư: Xóa toàn bộ lịch sử trò chuyện của chính người dùng.
+        user_id ĐƯỢC LẤY DUY NHẤT TỪ AUTHENTICATED TOKEN.
+        """
+        from sqlalchemy import delete
+        from app.db.models.chat import ChatSession, ChatMessage
+
+        # Tìm các session của user
+        sess_res = await db.execute(select(ChatSession.id).where(ChatSession.user_id == user_id))
+        session_ids = [s for s in sess_res.scalars().all()]
+
+        if not session_ids:
+            return 0
+
+        # Xóa toàn bộ tin nhắn thuộc các session này
+        msg_stmt = delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids))
+        res_msg = await db.execute(msg_stmt)
+        deleted_msgs = res_msg.rowcount or 0
+
+        # Xóa các session
+        sess_stmt = delete(ChatSession).where(ChatSession.id.in_(session_ids))
+        await db.execute(sess_stmt)
+
+        await db.commit()
+        return deleted_msgs
