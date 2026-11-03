@@ -514,9 +514,30 @@ class AuthState extends ChangeNotifier {
       if (!AppConstants.useMockApi) {
         final response = await ApiClient.instance.get('/users/me');
         _user = User.fromJson(response.data);
+        await StorageUtil.saveCachedUser(_user!);
         notifyListeners();
       }
-    } catch (_) {}
+    } catch (_) {
+      final cached = StorageUtil.getCachedUser();
+      if (cached != null) {
+        _user = cached;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Đồng bộ công ty vừa cập nhật từ WorkplaceService sang AuthState & StorageUtil
+  Future<void> syncWorkplaceCompany({
+    String? companyId,
+    required String companyName,
+  }) async {
+    if (_user == null) return;
+    _user = _user!.copyWith(
+      companyId: companyId,
+      companyName: companyName,
+    );
+    await StorageUtil.saveCachedUser(_user!);
+    notifyListeners();
   }
 
   // ── Update Profile ───────────────────────────────────────────────────────
@@ -632,4 +653,3 @@ class AuthState extends ChangeNotifier {
     }
   }
 }
-

@@ -39,6 +39,9 @@ async def build_user_profile_response(db: AsyncSession, user: User) -> UserRespo
 
     uni_pending = bool(uni and not uni.is_approved)
     comp_pending = bool(comp and not comp.is_approved)
+    resolved_company_name = (
+        comp.name if comp else (prof.company_name if prof and prof.company_name else None)
+    )
 
     return UserResponse(
         id=u.id,
@@ -51,7 +54,7 @@ async def build_user_profile_response(db: AsyncSession, user: User) -> UserRespo
         university_name=uni.name if uni else None,
         university_is_pending=uni_pending,
         company_id=prof.company_id if prof else None,
-        company_name=comp.name if comp else None,
+        company_name=resolved_company_name,
         company_is_pending=comp_pending,
         is_pending=bool(uni_pending or comp_pending),
         major=u.major,
@@ -184,6 +187,15 @@ async def apply_profile_catalog_updates(
             prof = InternProfile(user_id=user.id)
             db.add(prof)
         prof.company_id = comp.id
+        prof.company_name = comp.name
+        if comp.latitude is not None:
+            prof.company_lat = comp.latitude
+        if comp.longitude is not None:
+            prof.company_lng = comp.longitude
+        if comp.radius_meters is not None:
+            prof.company_radius = comp.radius_meters
+        if comp.workplace_type:
+            prof.workplace_type = comp.workplace_type
         target_comp = comp
 
     # Handle other_company_name
@@ -264,6 +276,7 @@ async def apply_profile_catalog_updates(
             prof = InternProfile(user_id=user.id)
             db.add(prof)
         prof.company_id = matched_comp.id
+        prof.company_name = matched_comp.name
         target_comp = matched_comp
 
     # Fetch rows if not modified in this request
@@ -397,7 +410,6 @@ async def update_my_profile(
     await db.commit()
     await db.refresh(user)
     return await build_user_profile_response(db, user)
-
 
 
 @router.post("/change-password", summary="Đổi mật khẩu tài khoản")

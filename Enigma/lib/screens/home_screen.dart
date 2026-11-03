@@ -15,6 +15,7 @@ import 'student/journal_screen.dart';
 import 'student/life_log_screen.dart';
 import 'student/profile_screen.dart';
 import 'student/complete_profile_screen.dart';
+import '../core/services/workplace_service.dart';
 import '../state/auth_state.dart';
 import '../state/notification_state.dart';
 
@@ -280,7 +281,7 @@ class HomeScreenState extends State<HomeScreen> {
                                   const SizedBox(width: 6),
                                   Flexible(
                                     child: Text(
-                                      'Thực tập sinh • LG Display',
+                                      'Thực tập sinh • ${(user?.companyName != null && user!.companyName!.trim().isNotEmpty) ? user.companyName! : (WorkplaceService.instance.profile?.companyName ?? "LG Display")}',
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodySmall

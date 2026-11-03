@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../state/app_state.dart';
+import '../../state/auth_state.dart';
 import '../../models/daily_checkin.dart';
 import '../../theme/app_theme.dart';
 import '../../core/api/life_log_repository.dart';
@@ -848,7 +849,34 @@ class CheckinGachaScreenState extends State<CheckinGachaScreen>
 
   void _showWorkplaceSetupModal() {
     final companies = WorkplaceService.instance.companies;
-    String selectedComp = _workplaceProfile?.companyName ?? (companies.isNotEmpty ? companies.first.name : 'LG Display Hải Phòng');
+    final existingName = _workplaceProfile?.companyName.trim() ?? '';
+    final existingType = _workplaceProfile?.workplaceType ?? '';
+    WorkplaceCompany? matchedPreset;
+    for (final c in companies) {
+      if (c.id != 'custom' &&
+          (c.name.toLowerCase() == existingName.toLowerCase() ||
+              c.shortName.toLowerCase() == existingName.toLowerCase())) {
+        matchedPreset = c;
+        break;
+      }
+    }
+    final customTemplate = companies.cast<WorkplaceCompany?>().firstWhere(
+          (c) => c?.id == 'custom' || c?.workplaceType == 'custom',
+          orElse: () => null,
+        );
+    final bool initIsCustom = existingType == 'custom' ||
+        (existingName.isNotEmpty && matchedPreset == null);
+    String selectedComp = initIsCustom
+        ? (customTemplate?.name ?? 'Công ty khác (Tự định vị / Văn phòng)')
+        : (matchedPreset?.name ??
+            (companies.isNotEmpty ? companies.first.name : 'LG Display Hải Phòng'));
+    final TextEditingController customCompanyCtrl = TextEditingController(
+      text: (initIsCustom &&
+              existingName != 'Công ty khác (Tự định vị / Văn phòng)' &&
+              existingName != 'Công ty khác')
+          ? existingName
+          : '',
+    );
     String selectedShift = _workplaceProfile?.workShift ?? 'day_12h';
     double? dormLat = _workplaceProfile?.dormLat;
     double? dormLng = _workplaceProfile?.dormLng;
@@ -865,16 +893,25 @@ class CheckinGachaScreenState extends State<CheckinGachaScreen>
           try {
             currentCompany = companies.firstWhere((c) => c.name == selectedComp);
           } catch (_) {
-            currentCompany = companies.isNotEmpty ? companies.first : null;
+            currentCompany = customTemplate;
           }
+          final bool isCustomSelected =
+              currentCompany?.id == 'custom' || currentCompany?.workplaceType == 'custom';
 
           return Container(
-            padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(modalCtx).viewInsets.bottom + 24),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(modalCtx).size.height * 0.9,
+            ),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom,
+            ),
             decoration: BoxDecoration(
               color: AppTheme.surfaceColor(context),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: Column(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -999,6 +1036,23 @@ class CheckinGachaScreenState extends State<CheckinGachaScreen>
                     ),
                   ),
                 ),
+                if (isCustomSelected) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: customCompanyCtrl,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: 'Tên công ty / văn phòng thực tập *',
+                      hintText: 'Nhập tên công ty của bạn...',
+                      prefixIcon: const Icon(Icons.edit_location_alt_rounded, size: 20),
+                      filled: true,
+                      fillColor: Theme.of(context).cardColor,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 // Chọn Ca làm
                 const Text('Lịch ca kíp của bạn:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
@@ -1129,21 +1183,55 @@ class CheckinGachaScreenState extends State<CheckinGachaScreen>
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: isSaving ? null : () async {
+                      final String targetCompanyName = isCustomSelected
+                          ? customCompanyCtrl.text.trim()
+                          : selectedComp;
+                      if (isCustomSelected && targetCompanyName.isEmpty) {
+                        ScaffoldMessenger.of(modalCtx).showSnackBar(
+                          const SnackBar(
+                            content: Text('Vui lòng nhập tên công ty thực tập khi chọn Công ty khác!'),
+                          ),
+                        );
+                        return;
+                      }
+                      final authState = context.read<AuthState>();
                       setModalState(() => isSaving = true);
                       final success = await WorkplaceService.instance.updateProfile(
-                        companyName: selectedComp,
+                        companyId: currentCompany?.id,
+                        companyName: targetCompanyName,
+                        workplaceType: currentCompany?.workplaceType,
                         workShift: selectedShift,
                         dormLat: dormLat,
                         dormLng: dormLng,
                       );
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      if (success) {
-                        await _loadWorkplaceData();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Cập nhật hồ sơ thực tập thành công!')),
+                      if (!success) {
+                        setModalState(() => isSaving = false);
+                        if (modalCtx.mounted) {
+                          ScaffoldMessenger.of(modalCtx).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                WorkplaceService.instance.lastError ??
+                                    'Không thể cập nhật công ty thực tập.',
+                              ),
+                            ),
                           );
                         }
+                        return;
+                      }
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      await _loadWorkplaceData();
+                      final updatedProf = WorkplaceService.instance.profile;
+                      if (updatedProf != null && updatedProf.companyName.isNotEmpty) {
+                        await authState.syncWorkplaceCompany(
+                          companyId: updatedProf.companyId,
+                          companyName: updatedProf.companyName,
+                        );
+                      }
+                      await authState.refreshProfile();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Cập nhật hồ sơ thực tập thành công!')),
+                        );
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -1158,6 +1246,7 @@ class CheckinGachaScreenState extends State<CheckinGachaScreen>
                   ),
                 ),
               ],
+            ),
             ),
           );
         },

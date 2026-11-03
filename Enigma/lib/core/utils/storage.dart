@@ -132,6 +132,7 @@ class StorageUtil {
 
   static Future<void> clearCachedUser() async {
     await _prefs.remove(_keyCachedUser);
+    await _prefs.remove(_keyCachedWorkplaceProfile);
     await _prefs.remove(_keyCompleteProfileSkipped);
   }
 
@@ -178,6 +179,21 @@ class StorageUtil {
   static const String _keyCachedDashboard = 'cached_dashboard_summary';
   static const String _keyCachedTodayCheckin = 'cached_today_checkin';
   static const String _keyCachedTodayLifeLog = 'cached_today_lifelog';
+  static const String _keyCachedWorkplaceProfile = 'cached_workplace_profile';
+
+  static Future<void> saveCachedWorkplaceProfile(Map<String, dynamic> data) async {
+    await _prefs.setString(_keyCachedWorkplaceProfile, jsonEncode(data));
+  }
+
+  static Map<String, dynamic>? getCachedWorkplaceProfile() {
+    final str = _prefs.getString(_keyCachedWorkplaceProfile);
+    if (str == null || str.isEmpty) return null;
+    try {
+      return jsonDecode(str) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<void> saveCachedTasks(List<dynamic> tasks) async {
     await _prefs.setString(_keyCachedTasks, jsonEncode(tasks));

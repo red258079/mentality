@@ -101,12 +101,14 @@ DEFAULT_COMPANIES: List[Dict[str, Any]] = [
 
 
 def find_company_by_name(name: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not name:
-        return DEFAULT_COMPANIES[0]
+    if not name or not name.strip():
+        return None
     name_clean = name.strip().lower()
     for c in DEFAULT_COMPANIES:
-        if c["name"].lower() == name_clean or c["short_name"].lower() == name_clean:
+        if (
+            c["name"].lower() == name_clean
+            or c["short_name"].lower() == name_clean
+            or c["id"].lower() == name_clean
+        ):
             return c
-        if c["id"] == name_clean:
-            return c
-    return DEFAULT_COMPANIES[0]
+    return None

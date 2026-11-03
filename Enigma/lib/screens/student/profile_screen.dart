@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/services/workplace_service.dart';
+import '../../core/utils/storage.dart';
 import '../../models/user.dart';
 import '../../state/app_state.dart';
 import '../../state/auth_state.dart';
@@ -20,8 +22,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AuthState>().refreshProfile();
+      _reloadProfileData();
     });
+  }
+
+  Future<void> _reloadProfileData() async {
+    await Future.wait([
+      context.read<AuthState>().refreshProfile(),
+      WorkplaceService.instance.fetchProfile(),
+    ]);
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   // ── Show Edit Profile Bottom Sheet ──────────────────────────────────────────
@@ -693,6 +705,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     final initialLetter = user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U';
+    final cachedCompanyName = StorageUtil.getCachedUser()?.companyName;
+    final workplaceCompanyName = WorkplaceService.instance.profile?.companyName;
+    final String companyDisplayName = (user.companyName != null && user.companyName!.trim().isNotEmpty)
+        ? user.companyName!
+        : ((workplaceCompanyName != null && workplaceCompanyName.trim().isNotEmpty)
+            ? workplaceCompanyName
+            : ((cachedCompanyName != null && cachedCompanyName.trim().isNotEmpty)
+                ? cachedCompanyName
+                : 'Chưa cập nhật'));
 
     return Scaffold(
       appBar: AppBar(
@@ -826,7 +847,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       _buildBadge(
                         icon: Icons.work_outline_rounded,
-                        label: 'LG Display Hải Phòng',
+                        label: companyDisplayName,
                         color: AppTheme.primaryLight,
                       ),
                       _buildBadge(
@@ -899,7 +920,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               context,
               icon: Icons.business_outlined,
               label: 'Đơn vị thực tập',
-              value: 'LG Display Hải Phòng',
+              value: companyDisplayName,
             ),
 
             const SizedBox(height: 24),

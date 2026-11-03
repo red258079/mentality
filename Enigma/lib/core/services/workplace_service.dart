@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import '../api/api_client.dart';
+import '../utils/storage.dart';
 
 enum WorkplaceStatus {
   atWorkplace, // Đang ở trong khuôn viên công ty / tủ đồ
@@ -54,6 +56,7 @@ class WorkplaceCompany {
 }
 
 class WorkplaceProfile {
+  final String? companyId;
   final String companyName;
   final String department;
   final double? companyLat;
@@ -65,6 +68,7 @@ class WorkplaceProfile {
   final double? dormLng;
 
   WorkplaceProfile({
+    this.companyId,
     required this.companyName,
     required this.department,
     this.companyLat,
@@ -78,16 +82,32 @@ class WorkplaceProfile {
 
   factory WorkplaceProfile.fromJson(Map<String, dynamic> json) {
     return WorkplaceProfile(
-      companyName: json['company_name'] ?? 'LG Display Hải Phòng',
+      companyId: json['company_id']?.toString(),
+      companyName: json['company_name'] ?? '',
       department: json['department'] ?? 'Khối Sản xuất Module',
-      companyLat: json['company_lat'] != null ? (json['company_lat'] as num).toDouble() : 20.8865,
-      companyLng: json['company_lng'] != null ? (json['company_lng'] as num).toDouble() : 106.5821,
+      companyLat: json['company_lat'] != null ? (json['company_lat'] as num).toDouble() : null,
+      companyLng: json['company_lng'] != null ? (json['company_lng'] as num).toDouble() : null,
       companyRadius: json['company_radius'] ?? 600,
       workplaceType: json['workplace_type'] ?? 'factory_locker',
       workShift: json['work_shift'] ?? 'day_12h',
       dormLat: json['dorm_lat'] != null ? (json['dorm_lat'] as num).toDouble() : null,
       dormLng: json['dorm_lng'] != null ? (json['dorm_lng'] as num).toDouble() : null,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'company_id': companyId,
+      'company_name': companyName,
+      'department': department,
+      'company_lat': companyLat,
+      'company_lng': companyLng,
+      'company_radius': companyRadius,
+      'workplace_type': workplaceType,
+      'work_shift': workShift,
+      'dorm_lat': dormLat,
+      'dorm_lng': dormLng,
+    };
   }
 }
 
@@ -197,12 +217,27 @@ class WorkplaceService {
   Position? _currentPosition;
   WorkplaceStatus _status = WorkplaceStatus.unknown;
   double? _distanceToCompanyMeters;
+  String? _lastError;
 
   List<WorkplaceCompany> get companies => _companies.isNotEmpty ? _companies : defaultCompanies;
   WorkplaceProfile? get profile => _profile;
   WorkplaceStatus get status => _status;
   Position? get currentPosition => _currentPosition;
   double? get distanceToCompanyMeters => _distanceToCompanyMeters;
+  String? get lastError => _lastError;
+
+  Future<void> _syncLocalCacheFromProfile(WorkplaceProfile prof) async {
+    await StorageUtil.saveCachedWorkplaceProfile(prof.toJson());
+    final cachedUser = StorageUtil.getCachedUser();
+    if (cachedUser != null && prof.companyName.isNotEmpty) {
+      await StorageUtil.saveCachedUser(
+        cachedUser.copyWith(
+          companyId: prof.companyId,
+          companyName: prof.companyName,
+        ),
+      );
+    }
+  }
 
   /// Tải danh mục công ty từ backend
   Future<List<WorkplaceCompany>> fetchCompanies() async {
@@ -225,36 +260,59 @@ class WorkplaceService {
   Future<WorkplaceProfile?> fetchProfile() async {
     try {
       final response = await ApiClient.instance.get('/workplace/profile');
-      _profile = WorkplaceProfile.fromJson(response.data);
+      if (response.data is Map<String, dynamic>) {
+        _profile = WorkplaceProfile.fromJson(response.data as Map<String, dynamic>);
+        await _syncLocalCacheFromProfile(_profile!);
+      }
       await evaluateCurrentLocation();
       return _profile;
     } catch (e) {
       debugPrint('[WorkplaceService] Lỗi tải hồ sơ thực tập: $e');
-      return null;
+      final cached = StorageUtil.getCachedWorkplaceProfile();
+      if (cached != null) {
+        _profile = WorkplaceProfile.fromJson(cached);
+      }
+      return _profile;
     }
   }
 
   /// Cập nhật công ty và ca làm việc
   Future<bool> updateProfile({
+    String? companyId,
     required String companyName,
     String? workShift,
     String? workplaceType,
     double? dormLat,
     double? dormLng,
   }) async {
+    _lastError = null;
     try {
       final payload = {
-        'company_name': companyName,
+        if (companyId != null && companyId.isNotEmpty) 'company_id': companyId,
+        'company_name': companyName.trim(),
         if (workShift != null) 'work_shift': workShift,
         if (workplaceType != null) 'workplace_type': workplaceType,
         if (dormLat != null) 'dorm_lat': dormLat,
         if (dormLng != null) 'dorm_lng': dormLng,
       };
 
-      await ApiClient.instance.put('/workplace/profile', data: payload);
-      await fetchProfile(); // Cập nhật lại state
+      final response = await ApiClient.instance.put('/workplace/profile', data: payload);
+      if (response.data is Map<String, dynamic>) {
+        _profile = WorkplaceProfile.fromJson(response.data as Map<String, dynamic>);
+        await _syncLocalCacheFromProfile(_profile!);
+      }
+      await evaluateCurrentLocation();
       return true;
+    } on DioException catch (e) {
+      if (e.response?.data is Map && e.response?.data['detail'] != null) {
+        _lastError = e.response?.data['detail'].toString();
+      } else {
+        _lastError = 'Không thể cập nhật công ty thực tập. Vui lòng thử lại.';
+      }
+      debugPrint('[WorkplaceService] Lỗi cập nhật hồ sơ thực tập: $_lastError');
+      return false;
     } catch (e) {
+      _lastError = 'Đã có lỗi xảy ra khi cập nhật công ty: $e';
       debugPrint('[WorkplaceService] Lỗi cập nhật hồ sơ thực tập: $e');
       return false;
     }
