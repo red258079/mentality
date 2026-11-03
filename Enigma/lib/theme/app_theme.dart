@@ -26,16 +26,16 @@ class AppTheme {
   static const Color textMuted = Color(0xFF64748B);
 
   // ── Light Mode Backgrounds & Surfaces ─────────────────────────────────────
-  static const Color bgLight = Color(0xFFFCF0DA);          // Warm Cream Background (#FCF0DA)
-  static const Color bgLightSurface = Color(0xFFFFFBF2);   // Soft Light Cream Card
-  static const Color bgLightSurfaceAlt = Color(0xFFF3E5C8);// Warm Sand / Secondary Surface
-  static const Color cardBorderLight = Color(0x228C6A3C);  // Soft warm border
-  static const Color cardBorderLightStrong = Color(0x448C6A3C);
+  static const Color bgLight = Color(0xFFF5F7FA);          // Soft cool gray background
+  static const Color bgLightSurface = Color(0xFFFFFFFF);   // White card surface
+  static const Color bgLightSurfaceAlt = Color(0xFFEBEFF5);// Secondary gray surface
+  static const Color cardBorderLight = Color(0x2264748B);  // Soft slate border
+  static const Color cardBorderLightStrong = Color(0x4464748B);
 
   // ── Light Mode Text Colors ─────────────────────────────────────────────────
-  static const Color textPrimaryLight = Color(0xFF2C221E); // Deep Warm Espresso / High Contrast
-  static const Color textSecondaryLight = Color(0xFF6E5B50);
-  static const Color textMutedLight = Color(0xFF9F8D82);
+  static const Color textPrimaryLight = Color(0xFF1E293B); // Deep slate / High Contrast
+  static const Color textSecondaryLight = Color(0xFF475569);
+  static const Color textMutedLight = Color(0xFF64748B);
 
   // Pillar Specific Colors
   static const Color mentalColor = Color(0xFF8ACFF8);    // Sky Blue (#8ACFF8)
@@ -276,7 +276,7 @@ class AppTheme {
             BoxShadow(
               color: isDark
                   ? Colors.black.withValues(alpha: 0.30)
-                  : const Color(0xFF8C6A3C).withValues(alpha: 0.08),
+                  : const Color(0xFF64748B).withValues(alpha: 0.08),
               blurRadius: isDark ? 20 : 16,
               offset: const Offset(0, 8),
               spreadRadius: -3,
@@ -296,7 +296,7 @@ class AppTheme {
     final base = tint ??
         (isDark
             ? const Color(0xFF161E31).withValues(alpha: opacity)
-            : const Color(0xFFFFFDF8).withValues(alpha: opacity + 0.15));
+            : bgLightSurface.withValues(alpha: opacity + 0.15));
 
     return BoxDecoration(
       gradient: LinearGradient(
@@ -311,7 +311,7 @@ class AppTheme {
             : [
                 Colors.white.withValues(alpha: 0.90),
                 base,
-                const Color(0xFFF7ECE0).withValues(alpha: opacity),
+                bgLightSurfaceAlt.withValues(alpha: opacity),
               ],
         stops: const [0.0, 0.45, 1.0],
       ),
@@ -326,7 +326,7 @@ class AppTheme {
         BoxShadow(
           color: isDark
               ? Colors.black.withValues(alpha: 0.35)
-              : const Color(0xFF8C6A3C).withValues(alpha: 0.08),
+              : const Color(0xFF64748B).withValues(alpha: 0.08),
           blurRadius: 20,
           offset: const Offset(0, 8),
           spreadRadius: -4,
