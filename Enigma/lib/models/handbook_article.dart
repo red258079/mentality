@@ -6,6 +6,9 @@ class HandbookArticle {
   final String author;
   final DateTime publishedAt;
   final int helpfulCount;
+  final bool isPublished;
+  final String status;
+  final String? summary;
 
   HandbookArticle({
     required this.id,
@@ -15,8 +18,12 @@ class HandbookArticle {
     required this.author,
     required this.publishedAt,
     this.helpfulCount = 0,
+    this.isPublished = true,
+    this.status = 'published',
+    this.summary,
   });
 
+  // TODO: Map isPublished from backend status (status == 'published') once real article data replaces mockArticles.
   static List<HandbookArticle> get mockArticles => [
     HandbookArticle(
       id: '1',
